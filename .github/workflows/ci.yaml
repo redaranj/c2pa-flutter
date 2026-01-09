@@ -1,0 +1,358 @@
+# C2PA Flutter Plugin - CI/CD Pipeline
+#
+# This workflow runs on every push and pull request to ensure code quality
+# and build integrity across all supported platforms.
+
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+env:
+  FLUTTER_VERSION: '3.38.6'
+
+jobs:
+  # =============================================================================
+  # Code Quality Checks
+  # =============================================================================
+  analyze:
+    name: Analyze
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Check formatting
+        run: dart format --set-exit-if-changed lib/ test/
+
+      - name: Run analyzer
+        run: flutter analyze --no-fatal-infos
+
+  # =============================================================================
+  # Unit Tests
+  # =============================================================================
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: analyze
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Run unit tests
+        run: flutter test --coverage --reporter expanded
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage/lcov.info
+          fail_ci_if_error: false
+          verbose: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  # =============================================================================
+  # Android Build
+  # =============================================================================
+  build-android:
+    name: Build Android
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: |
+          flutter pub get
+          cd example && flutter pub get
+
+      - name: Build Android APK (debug)
+        run: cd example && flutter build apk --debug
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-debug-apk
+          path: example/build/app/outputs/flutter-apk/app-debug.apk
+          retention-days: 7
+
+  # =============================================================================
+  # iOS Build
+  # =============================================================================
+  build-ios:
+    name: Build iOS
+    runs-on: macos-15
+    needs: unit-tests
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Set up Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "16.4"
+
+      - name: Verify Xcode version
+        run: xcodebuild -version
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: |
+          flutter pub get
+          cd example && flutter pub get
+
+      - name: Build iOS (no codesign)
+        run: cd example && flutter build ios --no-codesign --simulator
+
+  # =============================================================================
+  # Integration Tests - Android
+  # =============================================================================
+  integration-tests-android:
+    name: Integration Tests (Android)
+    runs-on: ubuntu-latest
+    needs: build-android
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: |
+          flutter pub get
+          cd example && flutter pub get
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run integration tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          profile: Nexus 6
+          script: cd example && flutter test integration_test/plugin_integration_test.dart
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+
+  # =============================================================================
+  # Integration Tests - iOS
+  # =============================================================================
+  integration-tests-ios:
+    name: Integration Tests (iOS)
+    runs-on: macos-15
+    needs: build-ios
+    env:
+      DEVICE_NAME: "iPhone 16"
+      IOS_VERSION: "18.5"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Set up Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "16.4"
+
+      - name: Verify Xcode version
+        run: xcodebuild -version
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: |
+          flutter pub get
+          cd example && flutter pub get
+
+      - name: Ensure Simulator is Available
+        run: |
+          echo "Looking for simulator: $DEVICE_NAME with iOS $IOS_VERSION"
+
+          # List available runtimes
+          echo "Available runtimes:"
+          xcrun simctl list runtimes
+
+          # List available device types
+          echo "Available iPhone device types:"
+          xcrun simctl list devicetypes | grep -i iphone | head -20
+
+          # Check if the simulator already exists (use exact match with trailing space+paren to avoid matching "iPhone 16 Pro" etc)
+          EXISTING_UDID=$(xcrun simctl list devices "$IOS_VERSION" | grep -E "$DEVICE_NAME \(" | grep -oE '[A-F0-9-]{36}' | head -1)
+
+          if [ -n "$EXISTING_UDID" ]; then
+            echo "Simulator found with UDID: $EXISTING_UDID"
+          else
+            echo "Simulator not found, creating one..."
+
+            # Get the runtime identifier
+            RUNTIME_ID=$(xcrun simctl list runtimes | grep "iOS $IOS_VERSION" | grep -oE 'com.apple.CoreSimulator.SimRuntime.iOS-[0-9-]+' | head -1)
+
+            if [ -z "$RUNTIME_ID" ]; then
+              echo "ERROR: iOS $IOS_VERSION runtime not found"
+              echo "Available iOS runtimes:"
+              xcrun simctl list runtimes | grep iOS
+              exit 1
+            fi
+
+            echo "Using runtime: $RUNTIME_ID"
+
+            # Get the device type identifier (use exact match)
+            DEVICE_TYPE=$(xcrun simctl list devicetypes | grep -E "^$DEVICE_NAME \(" | grep -oE 'com.apple.CoreSimulator.SimDeviceType.[^,)]+' | head -1)
+
+            if [ -z "$DEVICE_TYPE" ]; then
+              echo "ERROR: Device type for '$DEVICE_NAME' not found"
+              echo "Available iPhone device types:"
+              xcrun simctl list devicetypes | grep -i iphone
+              exit 1
+            fi
+
+            echo "Using device type: $DEVICE_TYPE"
+
+            # Create the simulator
+            EXISTING_UDID=$(xcrun simctl create "$DEVICE_NAME" "$DEVICE_TYPE" "$RUNTIME_ID")
+            echo "Created simulator with UDID: $EXISTING_UDID"
+          fi
+
+          # Boot the simulator if not already booted
+          STATE=$(xcrun simctl list devices | grep "$EXISTING_UDID" | grep -oE '\(Booted\)|\(Shutdown\)' | tr -d '()')
+
+          if [ "$STATE" != "Booted" ]; then
+            echo "Booting simulator..."
+            xcrun simctl boot "$EXISTING_UDID" || true
+          fi
+
+          # Wait for the simulator to be ready
+          echo "Waiting for simulator to be ready..."
+          xcrun simctl bootstatus "$EXISTING_UDID" -b
+
+          echo "Simulator is ready!"
+          xcrun simctl list devices | grep -E "$DEVICE_NAME \("
+
+          # Export the UDID for use in subsequent steps
+          echo "DEVICE_ID=$EXISTING_UDID" >> $GITHUB_ENV
+
+      - name: Run integration tests
+        timeout-minutes: 15
+        run: |
+          cd example
+          flutter test integration_test/plugin_integration_test.dart -d "$DEVICE_ID" --timeout 5m
+
+  # =============================================================================
+  # Publish Check
+  # =============================================================================
+  publish-check:
+    name: Publish Check
+    runs-on: ubuntu-latest
+    needs: [build-android, build-ios]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Check publish readiness
+        run: flutter pub publish --dry-run
+
+  # =============================================================================
+  # Summary Job
+  # =============================================================================
+  ci-success:
+    name: CI Success
+    runs-on: ubuntu-latest
+    needs: [analyze, unit-tests, build-android, build-ios, integration-tests-android, integration-tests-ios, publish-check]
+    if: always()
+    steps:
+      - name: Check all jobs
+        run: |
+          if [[ "${{ needs.analyze.result }}" != "success" ]] || \
+             [[ "${{ needs.unit-tests.result }}" != "success" ]] || \
+             [[ "${{ needs.build-android.result }}" != "success" ]] || \
+             [[ "${{ needs.build-ios.result }}" != "success" ]] || \
+             [[ "${{ needs.integration-tests-android.result }}" != "success" ]] || \
+             [[ "${{ needs.integration-tests-ios.result }}" != "success" ]] || \
+             [[ "${{ needs.publish-check.result }}" != "success" ]]; then
+            echo "One or more required jobs failed"
+            exit 1
+          fi
+          echo "All CI jobs passed successfully!"

@@ -1,0 +1,35 @@
+name: c2pa_flutter_example
+description: "C2PA Example App - Camera capture with content authenticity signing"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.7
+
+dependencies:
+  flutter:
+    sdk: flutter
+  c2pa_flutter:
+    path: ../
+  cupertino_icons: ^1.0.8
+  camera: ^0.11.1
+  image_picker: ^1.0.7
+  path_provider: ^2.1.2
+  permission_handler: ^11.3.0
+  webview_flutter: ^4.10.0
+  share_plus: ^10.1.4
+
+dev_dependencies:
+  integration_test:
+    sdk: flutter
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/
+    - assets/test_images/
+    - assets/test_certs/
+    - assets/test_manifests/
