@@ -1,0 +1,2 @@
+*.aar filter=lfs diff=lfs merge=lfs -text
+ios/C2PAC.xcframework/*/C2PAC.framework/C2PAC filter=lfs diff=lfs merge=lfs -text
