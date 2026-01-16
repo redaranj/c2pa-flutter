@@ -1,12 +1,12 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:c2pa/c2pa_method_channel.dart';
+import 'package:c2pa_flutter/c2pa_method_channel.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   MethodChannelC2pa platform = MethodChannelC2pa();
-  const MethodChannel channel = MethodChannel('c2pa');
+  const MethodChannel channel = MethodChannel('org.guardianproject.c2pa');
 
   setUp(() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(

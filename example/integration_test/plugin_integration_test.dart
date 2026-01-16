@@ -10,7 +10,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
-import 'package:c2pa/c2pa.dart';
+import 'package:c2pa_flutter/c2pa.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();

@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:c2pa/c2pa.dart';
-import 'package:c2pa/c2pa_platform_interface.dart';
-import 'package:c2pa/c2pa_method_channel.dart';
+import 'package:c2pa_flutter/c2pa.dart';
+import 'package:c2pa_flutter/c2pa_platform_interface.dart';
+import 'package:c2pa_flutter/c2pa_method_channel.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 class MockC2paPlatform

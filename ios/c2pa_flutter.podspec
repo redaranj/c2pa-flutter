@@ -1,5 +1,5 @@
 Pod::Spec.new do |s|
-  s.name             = 'c2pa'
+  s.name             = 'c2pa_flutter'
   s.version          = '0.0.1'
   s.summary          = 'Flutter plugin for C2PA (Coalition for Content Provenance and Authenticity)'
   s.description      = <<-DESC

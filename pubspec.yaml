@@ -1,7 +1,9 @@
-name: c2pa
-description: "A new Flutter plugin project."
+name: c2pa_flutter
+description: "Flutter plugin for C2PA (Coalition for Content Provenance and Authenticity) - read and sign content credentials on mobile devices."
 version: 0.0.1
-homepage:
+homepage: https://github.com/nicktardif/c2pa-flutter
+repository: https://github.com/nicktardif/c2pa-flutter
+issue_tracker: https://github.com/nicktardif/c2pa-flutter/issues
 
 environment:
   sdk: ^3.10.7

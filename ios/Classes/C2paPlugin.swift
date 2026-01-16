@@ -4,7 +4,7 @@ import C2PAC
 
 public class C2paPlugin: NSObject, FlutterPlugin {
     public static func register(with registrar: FlutterPluginRegistrar) {
-        let channel = FlutterMethodChannel(name: "c2pa", binaryMessenger: registrar.messenger())
+        let channel = FlutterMethodChannel(name: "org.guardianproject.c2pa", binaryMessenger: registrar.messenger())
         let instance = C2paPlugin()
         registrar.addMethodCallDelegate(instance, channel: channel)
     }

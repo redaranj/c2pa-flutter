@@ -19,7 +19,7 @@ class C2paPlugin : FlutterPlugin, MethodCallHandler {
     private lateinit var channel: MethodChannel
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
-        channel = MethodChannel(flutterPluginBinding.binaryMessenger, "c2pa")
+        channel = MethodChannel(flutterPluginBinding.binaryMessenger, "org.guardianproject.c2pa")
         channel.setMethodCallHandler(this)
     }
 

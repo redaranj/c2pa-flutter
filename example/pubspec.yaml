@@ -1,4 +1,4 @@
-name: c2pa_example
+name: c2pa_flutter_example
 description: "C2PA Example App - Camera capture with content authenticity signing"
 publish_to: 'none'
 version: 1.0.0+1
@@ -9,7 +9,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  c2pa:
+  c2pa_flutter:
     path: ../
   cupertino_icons: ^1.0.8
   camera: ^0.11.1

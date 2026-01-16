@@ -8,7 +8,7 @@ import 'c2pa_platform_interface.dart';
 
 class MethodChannelC2pa extends C2paPlatform {
   @visibleForTesting
-  final methodChannel = const MethodChannel('c2pa');
+  final methodChannel = const MethodChannel('org.guardianproject.c2pa');
 
   @override
   Future<String?> getPlatformVersion() async {
