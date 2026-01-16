@@ -30,3 +30,6 @@ flutter:
   uses-material-design: true
   assets:
     - assets/
+    - assets/test_images/
+    - assets/test_certs/
+    - assets/test_manifests/

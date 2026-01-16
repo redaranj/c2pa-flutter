@@ -1,0 +1,17 @@
+{
+  "claim_generator": "c2pa_flutter_test/1.0",
+  "title": "Test Image",
+  "format": "image/jpeg",
+  "assertions": [
+    {
+      "label": "c2pa.actions",
+      "data": {
+        "actions": [
+          {
+            "action": "c2pa.created"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "claim_generator": "c2pa_flutter_test/1.0",
+  "claim_generator_info": [
+    {
+      "name": "c2pa_flutter_test",
+      "version": "1.0.0"
+    }
+  ],
+  "title": "Test Image with Full Manifest",
+  "format": "image/jpeg",
+  "assertions": [
+    {
+      "label": "c2pa.actions",
+      "data": {
+        "actions": [
+          {
+            "action": "c2pa.created",
+            "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture",
+            "softwareAgent": "c2pa_flutter_test/1.0"
+          }
+        ]
+      }
+    },
+    {
+      "label": "stds.schema-org.CreativeWork",
+      "data": {
+        "@context": "https://schema.org",
+        "@type": "CreativeWork",
+        "author": [
+          {
+            "@type": "Person",
+            "name": "Test Author"
+          }
+        ]
+      }
+    }
+  ]
+}

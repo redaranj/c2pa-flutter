@@ -17,7 +17,7 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.1.2"
-  c2pa:
+  c2pa_flutter:
     dependency: "direct main"
     description:
       path: ".."
