@@ -132,7 +132,7 @@ jobs:
       - name: Set up Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: "16.2"
+          xcode-version: "16.4"
 
       - name: Verify Xcode version
         run: xcodebuild -version
@@ -208,7 +208,7 @@ jobs:
     needs: build-ios
     env:
       DEVICE_NAME: "iPhone 16"
-      IOS_VERSION: "18.2"
+      IOS_VERSION: "18.5"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -218,7 +218,7 @@ jobs:
       - name: Set up Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: "16.2"
+          xcode-version: "16.4"
 
       - name: Verify Xcode version
         run: xcodebuild -version
