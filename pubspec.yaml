@@ -9,6 +9,13 @@ environment:
   sdk: ^3.10.7
   flutter: '>=3.3.0'
 
+# Test certificates and mock keys are intentionally included for testing
+false_secrets:
+  - /test/fixtures/certificates/**
+  - /test/c2pa_test.dart
+  - /example/assets/test_certs/**
+  - /example/lib/services/c2pa_manager.dart
+
 dependencies:
   flutter:
     sdk: flutter
