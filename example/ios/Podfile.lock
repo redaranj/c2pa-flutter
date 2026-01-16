@@ -1,5 +1,5 @@
 PODS:
-  - c2pa (0.0.1):
+  - c2pa_flutter (0.0.1):
     - Flutter
   - camera_avfoundation (0.0.1):
     - Flutter
@@ -20,7 +20,7 @@ PODS:
     - FlutterMacOS
 
 DEPENDENCIES:
-  - c2pa (from `.symlinks/plugins/c2pa/ios`)
+  - c2pa_flutter (from `.symlinks/plugins/c2pa_flutter/ios`)
   - camera_avfoundation (from `.symlinks/plugins/camera_avfoundation/ios`)
   - Flutter (from `Flutter`)
   - image_picker_ios (from `.symlinks/plugins/image_picker_ios/ios`)
@@ -31,8 +31,8 @@ DEPENDENCIES:
   - webview_flutter_wkwebview (from `.symlinks/plugins/webview_flutter_wkwebview/darwin`)
 
 EXTERNAL SOURCES:
-  c2pa:
-    :path: ".symlinks/plugins/c2pa/ios"
+  c2pa_flutter:
+    :path: ".symlinks/plugins/c2pa_flutter/ios"
   camera_avfoundation:
     :path: ".symlinks/plugins/camera_avfoundation/ios"
   Flutter:
@@ -51,7 +51,7 @@ EXTERNAL SOURCES:
     :path: ".symlinks/plugins/webview_flutter_wkwebview/darwin"
 
 SPEC CHECKSUMS:
-  c2pa: f9e7e8aa7570501cbe1a40530169a39a5ec92aca
+  c2pa_flutter: d6535390bad7b70327ee35b54e52f54d47e7f1bd
   camera_avfoundation: 281867ff09f1da66f031a184ecfbc6f2e625c9f5
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
   image_picker_ios: 4f2f91b01abdb52842a8e277617df877e40f905b
