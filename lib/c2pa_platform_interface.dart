@@ -47,15 +47,27 @@ abstract class C2paPlatform extends PlatformInterface {
   // Reader API - Enhanced
   // ===========================================================================
 
-  Future<String?> readFileDetailed(String path, bool detailed, String? dataDir) {
+  Future<String?> readFileDetailed(
+    String path,
+    bool detailed,
+    String? dataDir,
+  ) {
     throw UnimplementedError('readFileDetailed() has not been implemented.');
   }
 
-  Future<String?> readBytesDetailed(Uint8List data, String mimeType, bool detailed) {
+  Future<String?> readBytesDetailed(
+    Uint8List data,
+    String mimeType,
+    bool detailed,
+  ) {
     throw UnimplementedError('readBytesDetailed() has not been implemented.');
   }
 
-  Future<Uint8List?> extractResource(Uint8List data, String mimeType, String uri) {
+  Future<Uint8List?> extractResource(
+    Uint8List data,
+    String mimeType,
+    String uri,
+  ) {
     throw UnimplementedError('extractResource() has not been implemented.');
   }
 
@@ -64,11 +76,15 @@ abstract class C2paPlatform extends PlatformInterface {
   }
 
   Future<List<String>> getSupportedReadMimeTypes() {
-    throw UnimplementedError('getSupportedReadMimeTypes() has not been implemented.');
+    throw UnimplementedError(
+      'getSupportedReadMimeTypes() has not been implemented.',
+    );
   }
 
   Future<List<String>> getSupportedSignMimeTypes() {
-    throw UnimplementedError('getSupportedSignMimeTypes() has not been implemented.');
+    throw UnimplementedError(
+      'getSupportedSignMimeTypes() has not been implemented.',
+    );
   }
 
   // ===========================================================================
@@ -102,10 +118,16 @@ abstract class C2paPlatform extends PlatformInterface {
   }
 
   Future<ManifestBuilder> createBuilderFromArchive(Uint8List archiveData) {
-    throw UnimplementedError('createBuilderFromArchive() has not been implemented.');
+    throw UnimplementedError(
+      'createBuilderFromArchive() has not been implemented.',
+    );
   }
 
-  Future<void> builderSetIntent(int handle, ManifestIntent intent, DigitalSourceType? digitalSourceType) {
+  Future<void> builderSetIntent(
+    int handle,
+    ManifestIntent intent,
+    DigitalSourceType? digitalSourceType,
+  ) {
     throw UnimplementedError('builderSetIntent() has not been implemented.');
   }
 
@@ -121,8 +143,15 @@ abstract class C2paPlatform extends PlatformInterface {
     throw UnimplementedError('builderAddResource() has not been implemented.');
   }
 
-  Future<void> builderAddIngredient(int handle, Uint8List data, String mimeType, String? ingredientJson) {
-    throw UnimplementedError('builderAddIngredient() has not been implemented.');
+  Future<void> builderAddIngredient(
+    int handle,
+    Uint8List data,
+    String mimeType,
+    String? ingredientJson,
+  ) {
+    throw UnimplementedError(
+      'builderAddIngredient() has not been implemented.',
+    );
   }
 
   Future<void> builderAddAction(int handle, String actionJson) {
@@ -164,7 +193,9 @@ abstract class C2paPlatform extends PlatformInterface {
     required int reservedSize,
     required String mimeType,
   }) {
-    throw UnimplementedError('createHashedPlaceholder() has not been implemented.');
+    throw UnimplementedError(
+      'createHashedPlaceholder() has not been implemented.',
+    );
   }
 
   Future<Uint8List> signHashedEmbeddable({
@@ -174,7 +205,9 @@ abstract class C2paPlatform extends PlatformInterface {
     required String mimeType,
     Uint8List? assetData,
   }) {
-    throw UnimplementedError('signHashedEmbeddable() has not been implemented.');
+    throw UnimplementedError(
+      'signHashedEmbeddable() has not been implemented.',
+    );
   }
 
   Future<Uint8List> formatEmbeddable({
@@ -185,7 +218,9 @@ abstract class C2paPlatform extends PlatformInterface {
   }
 
   Future<int> getSignerReserveSize(SignerInfo signerInfo) {
-    throw UnimplementedError('getSignerReserveSize() has not been implemented.');
+    throw UnimplementedError(
+      'getSignerReserveSize() has not been implemented.',
+    );
   }
 
   // ===========================================================================

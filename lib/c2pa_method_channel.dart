@@ -17,7 +17,9 @@ class MethodChannelC2pa extends C2paPlatform {
 
   @override
   Future<String?> getPlatformVersion() async {
-    final version = await methodChannel.invokeMethod<String>('getPlatformVersion');
+    final version = await methodChannel.invokeMethod<String>(
+      'getPlatformVersion',
+    );
     return version;
   }
 
@@ -53,53 +55,66 @@ class MethodChannelC2pa extends C2paPlatform {
   // ===========================================================================
 
   @override
-  Future<String?> readFileDetailed(String path, bool detailed, String? dataDir) async {
-    final result = await methodChannel.invokeMethod<String>('readFileDetailed', {
-      'path': path,
-      'detailed': detailed,
-      'dataDir': dataDir,
-    });
+  Future<String?> readFileDetailed(
+    String path,
+    bool detailed,
+    String? dataDir,
+  ) async {
+    final result = await methodChannel.invokeMethod<String>(
+      'readFileDetailed',
+      {'path': path, 'detailed': detailed, 'dataDir': dataDir},
+    );
     return result;
   }
 
   @override
-  Future<String?> readBytesDetailed(Uint8List data, String mimeType, bool detailed) async {
-    final result = await methodChannel.invokeMethod<String>('readBytesDetailed', {
-      'data': data,
-      'mimeType': mimeType,
-      'detailed': detailed,
-    });
+  Future<String?> readBytesDetailed(
+    Uint8List data,
+    String mimeType,
+    bool detailed,
+  ) async {
+    final result = await methodChannel.invokeMethod<String>(
+      'readBytesDetailed',
+      {'data': data, 'mimeType': mimeType, 'detailed': detailed},
+    );
     return result;
   }
 
   @override
-  Future<Uint8List?> extractResource(Uint8List data, String mimeType, String uri) async {
-    final result = await methodChannel.invokeMethod<Uint8List>('extractResource', {
-      'data': data,
-      'mimeType': mimeType,
-      'uri': uri,
-    });
+  Future<Uint8List?> extractResource(
+    Uint8List data,
+    String mimeType,
+    String uri,
+  ) async {
+    final result = await methodChannel.invokeMethod<Uint8List>(
+      'extractResource',
+      {'data': data, 'mimeType': mimeType, 'uri': uri},
+    );
     return result;
   }
 
   @override
   Future<String?> readIngredientFile(String path, String? dataDir) async {
-    final result = await methodChannel.invokeMethod<String>('readIngredientFile', {
-      'path': path,
-      'dataDir': dataDir,
-    });
+    final result = await methodChannel.invokeMethod<String>(
+      'readIngredientFile',
+      {'path': path, 'dataDir': dataDir},
+    );
     return result;
   }
 
   @override
   Future<List<String>> getSupportedReadMimeTypes() async {
-    final result = await methodChannel.invokeMethod<List>('getSupportedReadMimeTypes');
+    final result = await methodChannel.invokeMethod<List>(
+      'getSupportedReadMimeTypes',
+    );
     return result?.cast<String>() ?? [];
   }
 
   @override
   Future<List<String>> getSupportedSignMimeTypes() async {
-    final result = await methodChannel.invokeMethod<List>('getSupportedSignMimeTypes');
+    final result = await methodChannel.invokeMethod<List>(
+      'getSupportedSignMimeTypes',
+    );
     return result?.cast<String>() ?? [];
   }
 
@@ -122,7 +137,10 @@ class MethodChannelC2pa extends C2paPlatform {
     });
 
     if (result == null) {
-      throw PlatformException(code: 'ERROR', message: 'Sign operation returned null');
+      throw PlatformException(
+        code: 'ERROR',
+        message: 'Sign operation returned null',
+      );
     }
 
     return SignResult(
@@ -157,27 +175,40 @@ class MethodChannelC2pa extends C2paPlatform {
     });
 
     if (handle == null) {
-      throw PlatformException(code: 'ERROR', message: 'Failed to create builder');
+      throw PlatformException(
+        code: 'ERROR',
+        message: 'Failed to create builder',
+      );
     }
 
     return MethodChannelManifestBuilder(this, handle);
   }
 
   @override
-  Future<ManifestBuilder> createBuilderFromArchive(Uint8List archiveData) async {
-    final handle = await methodChannel.invokeMethod<int>('createBuilderFromArchive', {
-      'archiveData': archiveData,
-    });
+  Future<ManifestBuilder> createBuilderFromArchive(
+    Uint8List archiveData,
+  ) async {
+    final handle = await methodChannel.invokeMethod<int>(
+      'createBuilderFromArchive',
+      {'archiveData': archiveData},
+    );
 
     if (handle == null) {
-      throw PlatformException(code: 'ERROR', message: 'Failed to create builder from archive');
+      throw PlatformException(
+        code: 'ERROR',
+        message: 'Failed to create builder from archive',
+      );
     }
 
     return MethodChannelManifestBuilder(this, handle);
   }
 
   @override
-  Future<void> builderSetIntent(int handle, ManifestIntent intent, DigitalSourceType? digitalSourceType) async {
+  Future<void> builderSetIntent(
+    int handle,
+    ManifestIntent intent,
+    DigitalSourceType? digitalSourceType,
+  ) async {
     await methodChannel.invokeMethod<void>('builderSetIntent', {
       'handle': handle,
       'intent': intent.name,
@@ -201,7 +232,11 @@ class MethodChannelC2pa extends C2paPlatform {
   }
 
   @override
-  Future<void> builderAddResource(int handle, String uri, Uint8List data) async {
+  Future<void> builderAddResource(
+    int handle,
+    String uri,
+    Uint8List data,
+  ) async {
     await methodChannel.invokeMethod<void>('builderAddResource', {
       'handle': handle,
       'uri': uri,
@@ -210,7 +245,12 @@ class MethodChannelC2pa extends C2paPlatform {
   }
 
   @override
-  Future<void> builderAddIngredient(int handle, Uint8List data, String mimeType, String? ingredientJson) async {
+  Future<void> builderAddIngredient(
+    int handle,
+    Uint8List data,
+    String mimeType,
+    String? ingredientJson,
+  ) async {
     await methodChannel.invokeMethod<void>('builderAddIngredient', {
       'handle': handle,
       'data': data,
@@ -229,12 +269,16 @@ class MethodChannelC2pa extends C2paPlatform {
 
   @override
   Future<Uint8List> builderToArchive(int handle) async {
-    final result = await methodChannel.invokeMethod<Uint8List>('builderToArchive', {
-      'handle': handle,
-    });
+    final result = await methodChannel.invokeMethod<Uint8List>(
+      'builderToArchive',
+      {'handle': handle},
+    );
 
     if (result == null) {
-      throw PlatformException(code: 'ERROR', message: 'Failed to export builder to archive');
+      throw PlatformException(
+        code: 'ERROR',
+        message: 'Failed to export builder to archive',
+      );
     }
 
     return result;
@@ -255,7 +299,10 @@ class MethodChannelC2pa extends C2paPlatform {
     });
 
     if (result == null) {
-      throw PlatformException(code: 'ERROR', message: 'Builder sign operation returned null');
+      throw PlatformException(
+        code: 'ERROR',
+        message: 'Builder sign operation returned null',
+      );
     }
 
     return BuilderSignResult(
@@ -297,14 +344,20 @@ class MethodChannelC2pa extends C2paPlatform {
     required int reservedSize,
     required String mimeType,
   }) async {
-    final result = await methodChannel.invokeMethod<Uint8List>('createHashedPlaceholder', {
-      'handle': builderHandle,
-      'reservedSize': reservedSize,
-      'mimeType': mimeType,
-    });
+    final result = await methodChannel.invokeMethod<Uint8List>(
+      'createHashedPlaceholder',
+      {
+        'handle': builderHandle,
+        'reservedSize': reservedSize,
+        'mimeType': mimeType,
+      },
+    );
 
     if (result == null) {
-      throw PlatformException(code: 'ERROR', message: 'Failed to create hashed placeholder');
+      throw PlatformException(
+        code: 'ERROR',
+        message: 'Failed to create hashed placeholder',
+      );
     }
 
     return result;
@@ -318,16 +371,20 @@ class MethodChannelC2pa extends C2paPlatform {
     required String mimeType,
     Uint8List? assetData,
   }) async {
-    final result = await methodChannel.invokeMethod<Uint8List>('signHashedEmbeddable', {
-      'handle': builderHandle,
-      'signerInfo': signerInfo.toMap(),
-      'dataHash': dataHash,
-      'mimeType': mimeType,
-      'assetData': assetData,
-    });
+    final result = await methodChannel
+        .invokeMethod<Uint8List>('signHashedEmbeddable', {
+          'handle': builderHandle,
+          'signerInfo': signerInfo.toMap(),
+          'dataHash': dataHash,
+          'mimeType': mimeType,
+          'assetData': assetData,
+        });
 
     if (result == null) {
-      throw PlatformException(code: 'ERROR', message: 'Failed to sign hashed embeddable');
+      throw PlatformException(
+        code: 'ERROR',
+        message: 'Failed to sign hashed embeddable',
+      );
     }
 
     return result;
@@ -338,13 +395,16 @@ class MethodChannelC2pa extends C2paPlatform {
     required String mimeType,
     required Uint8List manifestBytes,
   }) async {
-    final result = await methodChannel.invokeMethod<Uint8List>('formatEmbeddable', {
-      'mimeType': mimeType,
-      'manifestBytes': manifestBytes,
-    });
+    final result = await methodChannel.invokeMethod<Uint8List>(
+      'formatEmbeddable',
+      {'mimeType': mimeType, 'manifestBytes': manifestBytes},
+    );
 
     if (result == null) {
-      throw PlatformException(code: 'ERROR', message: 'Failed to format embeddable');
+      throw PlatformException(
+        code: 'ERROR',
+        message: 'Failed to format embeddable',
+      );
     }
 
     return result;
@@ -352,12 +412,16 @@ class MethodChannelC2pa extends C2paPlatform {
 
   @override
   Future<int> getSignerReserveSize(SignerInfo signerInfo) async {
-    final result = await methodChannel.invokeMethod<int>('getSignerReserveSize', {
-      'signerInfo': signerInfo.toMap(),
-    });
+    final result = await methodChannel.invokeMethod<int>(
+      'getSignerReserveSize',
+      {'signerInfo': signerInfo.toMap()},
+    );
 
     if (result == null) {
-      throw PlatformException(code: 'ERROR', message: 'Failed to get signer reserve size');
+      throw PlatformException(
+        code: 'ERROR',
+        message: 'Failed to get signer reserve size',
+      );
     }
 
     return result;
@@ -397,7 +461,10 @@ class MethodChannelManifestBuilder implements ManifestBuilder {
   }
 
   @override
-  void setIntent(ManifestIntent intent, [DigitalSourceType? digitalSourceType]) {
+  void setIntent(
+    ManifestIntent intent, [
+    DigitalSourceType? digitalSourceType,
+  ]) {
     _checkDisposed();
     _pendingOperations.add({
       'type': 'setIntent',
@@ -415,7 +482,10 @@ class MethodChannelManifestBuilder implements ManifestBuilder {
   @override
   void setClaimGenerator(String generator) {
     _checkDisposed();
-    _pendingOperations.add({'type': 'setClaimGenerator', 'generator': generator});
+    _pendingOperations.add({
+      'type': 'setClaimGenerator',
+      'generator': generator,
+    });
   }
 
   @override
@@ -457,11 +527,10 @@ class MethodChannelManifestBuilder implements ManifestBuilder {
     IngredientConfig? config,
   }) async {
     _checkDisposed();
-    await _platform.methodChannel.invokeMethod<void>('builderAddIngredientFromFile', {
-      'handle': _handle,
-      'path': path,
-      'ingredientJson': config?.toJson(),
-    });
+    await _platform.methodChannel.invokeMethod<void>(
+      'builderAddIngredientFromFile',
+      {'handle': _handle, 'path': path, 'ingredientJson': config?.toJson()},
+    );
   }
 
   @override

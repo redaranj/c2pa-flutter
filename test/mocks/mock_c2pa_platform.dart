@@ -14,8 +14,18 @@ class MockC2paPlatform extends C2paPlatform with MockPlatformInterfaceMixin {
   Uint8List? mockSignedData;
   Uint8List? mockManifestBytes;
   Uint8List? mockResourceData;
-  List<String> supportedReadMimeTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4'];
-  List<String> supportedSignMimeTypes = ['image/jpeg', 'image/png', 'image/webp'];
+  List<String> supportedReadMimeTypes = [
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+    'image/gif',
+    'video/mp4',
+  ];
+  List<String> supportedSignMimeTypes = [
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+  ];
   int mockReserveSize = 10000;
 
   // Track method calls for verification
@@ -88,24 +98,49 @@ class MockC2paPlatform extends C2paPlatform with MockPlatformInterfaceMixin {
   // ===========================================================================
 
   @override
-  Future<String?> readFileDetailed(String path, bool detailed, String? dataDir) async {
-    _recordCall('readFileDetailed', {'path': path, 'detailed': detailed, 'dataDir': dataDir});
+  Future<String?> readFileDetailed(
+    String path,
+    bool detailed,
+    String? dataDir,
+  ) async {
+    _recordCall('readFileDetailed', {
+      'path': path,
+      'detailed': detailed,
+      'dataDir': dataDir,
+    });
     _checkError();
     return mockManifestJson ?? _generateMockManifestJson(path);
   }
 
   @override
-  Future<String?> readBytesDetailed(Uint8List data, String mimeType, bool detailed) async {
-    _recordCall('readBytesDetailed', {'dataLength': data.length, 'mimeType': mimeType, 'detailed': detailed});
+  Future<String?> readBytesDetailed(
+    Uint8List data,
+    String mimeType,
+    bool detailed,
+  ) async {
+    _recordCall('readBytesDetailed', {
+      'dataLength': data.length,
+      'mimeType': mimeType,
+      'detailed': detailed,
+    });
     _checkError();
     return mockManifestJson ?? _generateMockManifestJson('bytes');
   }
 
   @override
-  Future<Uint8List?> extractResource(Uint8List data, String mimeType, String uri) async {
-    _recordCall('extractResource', {'dataLength': data.length, 'mimeType': mimeType, 'uri': uri});
+  Future<Uint8List?> extractResource(
+    Uint8List data,
+    String mimeType,
+    String uri,
+  ) async {
+    _recordCall('extractResource', {
+      'dataLength': data.length,
+      'mimeType': mimeType,
+      'uri': uri,
+    });
     _checkError();
-    return mockResourceData ?? Uint8List.fromList([0xFF, 0xD8, 0xFF, 0xE0]); // Minimal JPEG header
+    return mockResourceData ??
+        Uint8List.fromList([0xFF, 0xD8, 0xFF, 0xE0]); // Minimal JPEG header
   }
 
   @override
@@ -153,7 +188,8 @@ class MockC2paPlatform extends C2paPlatform with MockPlatformInterfaceMixin {
     _checkError();
 
     return SignResult(
-      signedData: mockSignedData ?? Uint8List.fromList([...sourceData, 0xC2, 0xAA]),
+      signedData:
+          mockSignedData ?? Uint8List.fromList([...sourceData, 0xC2, 0xAA]),
       manifestBytes: mockManifestBytes,
     );
   }
@@ -190,8 +226,12 @@ class MockC2paPlatform extends C2paPlatform with MockPlatformInterfaceMixin {
   }
 
   @override
-  Future<ManifestBuilder> createBuilderFromArchive(Uint8List archiveData) async {
-    _recordCall('createBuilderFromArchive', {'archiveDataLength': archiveData.length});
+  Future<ManifestBuilder> createBuilderFromArchive(
+    Uint8List archiveData,
+  ) async {
+    _recordCall('createBuilderFromArchive', {
+      'archiveDataLength': archiveData.length,
+    });
     _checkError();
 
     final handle = _nextBuilderId++;
@@ -201,8 +241,16 @@ class MockC2paPlatform extends C2paPlatform with MockPlatformInterfaceMixin {
   }
 
   @override
-  Future<void> builderSetIntent(int handle, ManifestIntent intent, DigitalSourceType? digitalSourceType) async {
-    _recordCall('builderSetIntent', {'handle': handle, 'intent': intent.name, 'digitalSourceType': digitalSourceType?.name});
+  Future<void> builderSetIntent(
+    int handle,
+    ManifestIntent intent,
+    DigitalSourceType? digitalSourceType,
+  ) async {
+    _recordCall('builderSetIntent', {
+      'handle': handle,
+      'intent': intent.name,
+      'digitalSourceType': digitalSourceType?.name,
+    });
     _checkError();
     builders[handle]?.intent = intent;
     builders[handle]?.digitalSourceType = digitalSourceType;
@@ -223,14 +271,27 @@ class MockC2paPlatform extends C2paPlatform with MockPlatformInterfaceMixin {
   }
 
   @override
-  Future<void> builderAddResource(int handle, String uri, Uint8List data) async {
-    _recordCall('builderAddResource', {'handle': handle, 'uri': uri, 'dataLength': data.length});
+  Future<void> builderAddResource(
+    int handle,
+    String uri,
+    Uint8List data,
+  ) async {
+    _recordCall('builderAddResource', {
+      'handle': handle,
+      'uri': uri,
+      'dataLength': data.length,
+    });
     _checkError();
     builders[handle]?.resources[uri] = data;
   }
 
   @override
-  Future<void> builderAddIngredient(int handle, Uint8List data, String mimeType, String? ingredientJson) async {
+  Future<void> builderAddIngredient(
+    int handle,
+    Uint8List data,
+    String mimeType,
+    String? ingredientJson,
+  ) async {
     _recordCall('builderAddIngredient', {
       'handle': handle,
       'dataLength': data.length,
@@ -238,12 +299,17 @@ class MockC2paPlatform extends C2paPlatform with MockPlatformInterfaceMixin {
       'ingredientJson': ingredientJson,
     });
     _checkError();
-    builders[handle]?.ingredients.add(MockIngredient(data, mimeType, ingredientJson));
+    builders[handle]?.ingredients.add(
+      MockIngredient(data, mimeType, ingredientJson),
+    );
   }
 
   @override
   Future<void> builderAddAction(int handle, String actionJson) async {
-    _recordCall('builderAddAction', {'handle': handle, 'actionJson': actionJson});
+    _recordCall('builderAddAction', {
+      'handle': handle,
+      'actionJson': actionJson,
+    });
     _checkError();
     builders[handle]?.actions.add(actionJson);
   }
@@ -271,7 +337,8 @@ class MockC2paPlatform extends C2paPlatform with MockPlatformInterfaceMixin {
     });
     _checkError();
 
-    final signedData = mockSignedData ?? Uint8List.fromList([...sourceData, 0xC2, 0xAA]);
+    final signedData =
+        mockSignedData ?? Uint8List.fromList([...sourceData, 0xC2, 0xAA]);
     return BuilderSignResult(
       signedData: signedData,
       manifestBytes: mockManifestBytes,
@@ -354,7 +421,9 @@ class MockC2paPlatform extends C2paPlatform with MockPlatformInterfaceMixin {
 
   @override
   Future<int> getSignerReserveSize(SignerInfo signerInfo) async {
-    _recordCall('getSignerReserveSize', {'algorithm': signerInfo.algorithm.name});
+    _recordCall('getSignerReserveSize', {
+      'algorithm': signerInfo.algorithm.name,
+    });
     _checkError();
     return mockReserveSize;
   }
@@ -390,13 +459,13 @@ class MockC2paPlatform extends C2paPlatform with MockPlatformInterfaceMixin {
                   {
                     'action': 'c2pa.created',
                     'softwareAgent': 'c2pa_flutter_test/1.0',
-                  }
-                ]
-              }
-            }
+                  },
+                ],
+              },
+            },
           ],
           'ingredients': [],
-        }
+        },
       },
       'validation_status': [],
     });
@@ -446,7 +515,10 @@ class MockBuilder implements ManifestBuilder {
   }
 
   @override
-  void setIntent(ManifestIntent intent, [DigitalSourceType? digitalSourceType]) {
+  void setIntent(
+    ManifestIntent intent, [
+    DigitalSourceType? digitalSourceType,
+  ]) {
     _checkDisposed();
     this.intent = intent;
     this.digitalSourceType = digitalSourceType;
@@ -489,7 +561,12 @@ class MockBuilder implements ManifestBuilder {
     IngredientConfig? config,
   }) async {
     _checkDisposed();
-    await _platform.builderAddIngredient(_handle, data, mimeType, config?.toJson());
+    await _platform.builderAddIngredient(
+      _handle,
+      data,
+      mimeType,
+      config?.toJson(),
+    );
   }
 
   @override

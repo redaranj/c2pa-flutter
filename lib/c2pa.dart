@@ -8,15 +8,7 @@ import 'c2pa_platform_interface.dart';
 // =============================================================================
 
 /// Signing algorithms supported by C2PA
-enum SigningAlgorithm {
-  es256,
-  es384,
-  es512,
-  ps256,
-  ps384,
-  ps512,
-  ed25519,
-}
+enum SigningAlgorithm { es256, es384, es512, ps256, ps384, ps512, ed25519 }
 
 /// Builder intent - specifies what kind of manifest to create
 enum ManifestIntent {
@@ -61,17 +53,10 @@ enum DigitalSourceType {
 }
 
 /// Validation status for manifest verification
-enum ValidationStatus {
-  valid,
-  invalid,
-  unknown,
-}
+enum ValidationStatus { valid, invalid, unknown }
 
 /// Relationship type for ingredients
-enum IngredientRelationship {
-  parentOf,
-  componentOf,
-}
+enum IngredientRelationship { parentOf, componentOf }
 
 // =============================================================================
 // Core Data Classes
@@ -139,16 +124,10 @@ class ReaderOptions {
   /// Directory to write resources (thumbnails, etc.)
   final String? dataDir;
 
-  const ReaderOptions({
-    this.detailed = false,
-    this.dataDir,
-  });
+  const ReaderOptions({this.detailed = false, this.dataDir});
 
   Map<String, dynamic> toMap() {
-    return {
-      'detailed': detailed,
-      'dataDir': dataDir,
-    };
+    return {'detailed': detailed, 'dataDir': dataDir};
   }
 }
 
@@ -188,7 +167,9 @@ class SignatureInfo {
           : null,
       algorithm: map['algorithm'] != null
           ? SigningAlgorithm.values.firstWhere(
-              (e) => e.name.toLowerCase() == (map['algorithm'] as String).toLowerCase(),
+              (e) =>
+                  e.name.toLowerCase() ==
+                  (map['algorithm'] as String).toLowerCase(),
               orElse: () => SigningAlgorithm.es256,
             )
           : null,
@@ -237,11 +218,7 @@ class AssertionInfo {
   /// Instance identifier if present
   final int? instance;
 
-  AssertionInfo({
-    required this.label,
-    required this.data,
-    this.instance,
-  });
+  AssertionInfo({required this.label, required this.data, this.instance});
 
   factory AssertionInfo.fromMap(Map<String, dynamic> map) {
     return AssertionInfo(
@@ -379,11 +356,13 @@ class ManifestInfo {
       signature: map['signature_info'] != null
           ? SignatureInfo.fromMap(map['signature_info'] as Map<String, dynamic>)
           : null,
-      assertions: (map['assertions'] as List<dynamic>?)
+      assertions:
+          (map['assertions'] as List<dynamic>?)
               ?.map((a) => AssertionInfo.fromMap(a as Map<String, dynamic>))
               .toList() ??
           [],
-      ingredients: (map['ingredients'] as List<dynamic>?)
+      ingredients:
+          (map['ingredients'] as List<dynamic>?)
               ?.map((i) => IngredientInfo.fromMap(i as Map<String, dynamic>))
               .toList() ??
           [],
@@ -427,15 +406,17 @@ class ManifestStoreInfo {
     final manifestsData = map['manifests'] as Map<String, dynamic>?;
     if (manifestsData != null) {
       for (final entry in manifestsData.entries) {
-        manifestsMap[entry.key] =
-            ManifestInfo.fromMap(entry.value as Map<String, dynamic>);
+        manifestsMap[entry.key] = ManifestInfo.fromMap(
+          entry.value as Map<String, dynamic>,
+        );
       }
     }
 
     return ManifestStoreInfo(
       activeManifest: map['active_manifest'] as String?,
       manifests: manifestsMap,
-      validationErrors: (map['validation_status'] as List<dynamic>?)
+      validationErrors:
+          (map['validation_status'] as List<dynamic>?)
               ?.map((e) => ValidationError.fromMap(e as Map<String, dynamic>))
               .toList() ??
           [],
@@ -466,18 +447,10 @@ class ResourceRef {
   /// Optional MIME type
   final String? mimeType;
 
-  ResourceRef({
-    required this.uri,
-    required this.data,
-    this.mimeType,
-  });
+  ResourceRef({required this.uri, required this.data, this.mimeType});
 
   Map<String, dynamic> toMap() {
-    return {
-      'uri': uri,
-      'data': data,
-      'mimeType': mimeType,
-    };
+    return {'uri': uri, 'data': data, 'mimeType': mimeType};
   }
 }
 
@@ -542,9 +515,7 @@ class ActionConfig {
   });
 
   Map<String, dynamic> toMap() {
-    final map = <String, dynamic>{
-      'action': action,
-    };
+    final map = <String, dynamic>{'action': action};
     if (when != null) map['when'] = when!.toIso8601String();
     if (softwareAgent != null) map['softwareAgent'] = softwareAgent;
     if (digitalSourceType != null) {
