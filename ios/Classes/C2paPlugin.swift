@@ -4,7 +4,7 @@ import C2PAC
 
 public class C2paPlugin: NSObject, FlutterPlugin {
     // Builder handle management
-    private var builders: [Int: OpaquePointer] = [:]
+    private var builders: [Int: UnsafeMutablePointer<C2paBuilder>] = [:]
     private var nextBuilderHandle: Int = 1
     private let builderLock = NSLock()
 
@@ -396,14 +396,15 @@ public class C2paPlugin: NSObject, FlutterPlugin {
         }
         defer { c2pa_signer_free(signer) }
 
-        let builder = c2pa_builder_from_json(manifestJson)
-        guard let builder = builder else {
+        let builderPtr = c2pa_builder_from_json(manifestJson)
+        guard let builderPtr = builderPtr else {
             let errorPtr = c2pa_error()
             let error = errorPtr != nil ? String(cString: errorPtr!) : "Failed to create builder"
             if errorPtr != nil { c2pa_string_free(errorPtr) }
             result(FlutterError(code: "C2PA_ERROR", message: error, details: nil))
             return
         }
+        let builder = UnsafeMutableRawPointer(builderPtr).assumingMemoryBound(to: C2paBuilder.self)
         defer { c2pa_builder_free(builder) }
 
         var sourceStreamData = StreamData(data: sourceData, position: 0)
@@ -508,14 +509,15 @@ public class C2paPlugin: NSObject, FlutterPlugin {
             return
         }
 
-        let builder = c2pa_builder_from_json(manifestJson)
-        guard let builder = builder else {
+        let builderPtr = c2pa_builder_from_json(manifestJson)
+        guard let builderPtr = builderPtr else {
             let errorPtr = c2pa_error()
             let error = errorPtr != nil ? String(cString: errorPtr!) : "Failed to create builder"
             if errorPtr != nil { c2pa_string_free(errorPtr) }
             result(FlutterError(code: "C2PA_ERROR", message: error, details: nil))
             return
         }
+        let builder = UnsafeMutableRawPointer(builderPtr).assumingMemoryBound(to: C2paBuilder.self)
 
         let handle = storeBuilder(builder)
         result(handle)
@@ -541,14 +543,15 @@ public class C2paPlugin: NSObject, FlutterPlugin {
         }
         defer { c2pa_release_stream(stream) }
 
-        let builder = c2pa_builder_from_archive(stream)
-        guard let builder = builder else {
+        let builderPtr = c2pa_builder_from_archive(stream)
+        guard let builderPtr = builderPtr else {
             let errorPtr = c2pa_error()
             let error = errorPtr != nil ? String(cString: errorPtr!) : "Failed to create builder from archive"
             if errorPtr != nil { c2pa_string_free(errorPtr) }
             result(FlutterError(code: "C2PA_ERROR", message: error, details: nil))
             return
         }
+        let builder = UnsafeMutableRawPointer(builderPtr).assumingMemoryBound(to: C2paBuilder.self)
 
         let handle = storeBuilder(builder)
         result(handle)
@@ -1328,7 +1331,7 @@ public class C2paPlugin: NSObject, FlutterPlugin {
 
     // MARK: - Builder Handle Management
 
-    private func storeBuilder(_ builder: OpaquePointer) -> Int {
+    private func storeBuilder(_ builder: UnsafeMutablePointer<C2paBuilder>) -> Int {
         builderLock.lock()
         defer { builderLock.unlock() }
 
@@ -1338,7 +1341,7 @@ public class C2paPlugin: NSObject, FlutterPlugin {
         return handle
     }
 
-    private func getBuilder(_ handle: Int) -> OpaquePointer? {
+    private func getBuilder(_ handle: Int) -> UnsafeMutablePointer<C2paBuilder>? {
         builderLock.lock()
         defer { builderLock.unlock() }
 
