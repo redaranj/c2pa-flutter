@@ -247,8 +247,8 @@ jobs:
           echo "Available iPhone device types:"
           xcrun simctl list devicetypes | grep -i iphone | head -20
 
-          # Check if the simulator already exists
-          EXISTING_UDID=$(xcrun simctl list devices "$IOS_VERSION" | grep "$DEVICE_NAME" | grep -oE '[A-F0-9-]{36}' | head -1)
+          # Check if the simulator already exists (use exact match with trailing space+paren to avoid matching "iPhone 16 Pro" etc)
+          EXISTING_UDID=$(xcrun simctl list devices "$IOS_VERSION" | grep -E "$DEVICE_NAME \(" | grep -oE '[A-F0-9-]{36}' | head -1)
 
           if [ -n "$EXISTING_UDID" ]; then
             echo "Simulator found with UDID: $EXISTING_UDID"
@@ -267,8 +267,8 @@ jobs:
 
             echo "Using runtime: $RUNTIME_ID"
 
-            # Get the device type identifier
-            DEVICE_TYPE=$(xcrun simctl list devicetypes | grep "$DEVICE_NAME" | grep -oE 'com.apple.CoreSimulator.SimDeviceType.[^,)]+' | head -1)
+            # Get the device type identifier (use exact match)
+            DEVICE_TYPE=$(xcrun simctl list devicetypes | grep -E "^$DEVICE_NAME \(" | grep -oE 'com.apple.CoreSimulator.SimDeviceType.[^,)]+' | head -1)
 
             if [ -z "$DEVICE_TYPE" ]; then
               echo "ERROR: Device type for '$DEVICE_NAME' not found"
@@ -297,7 +297,7 @@ jobs:
           xcrun simctl bootstatus "$EXISTING_UDID" -b
 
           echo "Simulator is ready!"
-          xcrun simctl list devices | grep "$DEVICE_NAME"
+          xcrun simctl list devices | grep -E "$DEVICE_NAME \("
 
           # Export the UDID for use in subsequent steps
           echo "DEVICE_ID=$EXISTING_UDID" >> $GITHUB_ENV
