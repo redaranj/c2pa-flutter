@@ -92,6 +92,10 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'c2pa_platform_interface.dart';
+import 'src/manifest_types.dart';
+
+// Export manifest types
+export 'src/manifest_types.dart';
 
 // =============================================================================
 // Enums
@@ -119,34 +123,8 @@ enum ManifestIntent {
   update,
 }
 
-/// Digital source types as defined by C2PA/IPTC
-enum DigitalSourceType {
-  empty,
-  trainedAlgorithmicData,
-  digitalCapture,
-  computationalCapture,
-  negativeFilm,
-  positiveFilm,
-  print,
-  humanEdits,
-  compositeWithTrainedAlgorithmicMedia,
-  algorithmicallyEnhanced,
-  digitalCreation,
-  dataDrivenMedia,
-  trainedAlgorithmicMedia,
-  algorithmicMedia,
-  screenCapture,
-  virtualRecording,
-  composite,
-  compositeCapture,
-  compositeSynthetic,
-}
-
 /// Validation status for manifest verification
 enum ValidationStatus { valid, invalid, unknown }
-
-/// Relationship type for ingredients
-enum IngredientRelationship { parentOf, componentOf }
 
 // =============================================================================
 // Core Data Classes
@@ -616,7 +594,7 @@ class IngredientInfo {
   final String? documentId;
 
   /// Relationship to parent manifest
-  final IngredientRelationship relationship;
+  final Relationship relationship;
 
   /// Thumbnail URI if present
   final String? thumbnailUri;
@@ -640,11 +618,13 @@ class IngredientInfo {
 
   factory IngredientInfo.fromMap(Map<String, dynamic> map) {
     final relationshipStr = map['relationship'] as String?;
-    IngredientRelationship relationship;
+    Relationship relationship;
     if (relationshipStr == 'parentOf') {
-      relationship = IngredientRelationship.parentOf;
+      relationship = Relationship.parentOf;
+    } else if (relationshipStr == 'inputTo') {
+      relationship = Relationship.inputTo;
     } else {
-      relationship = IngredientRelationship.componentOf;
+      relationship = Relationship.componentOf;
     }
 
     return IngredientInfo(
@@ -808,8 +788,11 @@ class ManifestStoreInfo {
 // Builder Data Classes
 // =============================================================================
 
-/// Reference to a resource (thumbnail, icon, etc.)
-class ResourceRef {
+/// Resource data for adding to a builder (thumbnail, icon, etc.)
+///
+/// This differs from [ResourceRef] in manifest_types.dart which is used
+/// for references within the manifest JSON structure.
+class BuilderResource {
   /// URI identifier for the resource
   final String uri;
 
@@ -819,40 +802,36 @@ class ResourceRef {
   /// Optional MIME type
   final String? mimeType;
 
-  ResourceRef({required this.uri, required this.data, this.mimeType});
+  BuilderResource({required this.uri, required this.data, this.mimeType});
 
   Map<String, dynamic> toMap() {
     return {'uri': uri, 'data': data, 'mimeType': mimeType};
   }
 }
 
-/// Configuration for adding an ingredient
+/// Configuration for adding an ingredient to a builder
 class IngredientConfig {
   /// Title of the ingredient
   final String? title;
 
   /// Relationship to the manifest
-  final IngredientRelationship relationship;
+  final Relationship relationship;
 
   /// Optional thumbnail
-  final ResourceRef? thumbnail;
+  final BuilderResource? thumbnail;
 
   /// Additional JSON data for the ingredient
   final Map<String, dynamic>? additionalData;
 
   IngredientConfig({
     this.title,
-    this.relationship = IngredientRelationship.componentOf,
+    this.relationship = Relationship.componentOf,
     this.thumbnail,
     this.additionalData,
   });
 
   Map<String, dynamic> toMap() {
-    final map = <String, dynamic>{
-      'relationship': relationship == IngredientRelationship.parentOf
-          ? 'parentOf'
-          : 'componentOf',
-    };
+    final map = <String, dynamic>{'relationship': relationship.toJson()};
     if (title != null) map['title'] = title;
     if (additionalData != null) map.addAll(additionalData!);
     return map;
@@ -861,7 +840,7 @@ class IngredientConfig {
   String toJson() => jsonEncode(toMap());
 }
 
-/// Configuration for adding an action
+/// Configuration for adding an action to a builder
 class ActionConfig {
   /// The action identifier (e.g., "c2pa.created", "c2pa.edited")
   final String action;
@@ -891,57 +870,13 @@ class ActionConfig {
     if (when != null) map['when'] = when!.toIso8601String();
     if (softwareAgent != null) map['softwareAgent'] = softwareAgent;
     if (digitalSourceType != null) {
-      map['digitalSourceType'] = _digitalSourceTypeToUrl(digitalSourceType!);
+      map['digitalSourceType'] = digitalSourceType!.url;
     }
     if (parameters != null) map['parameters'] = parameters;
     return map;
   }
 
   String toJson() => jsonEncode(toMap());
-
-  static String _digitalSourceTypeToUrl(DigitalSourceType type) {
-    const baseUrl = 'http://cv.iptc.org/newscodes/digitalsourcetype/';
-    switch (type) {
-      case DigitalSourceType.empty:
-        return 'http://c2pa.org/digitalsourcetype/empty';
-      case DigitalSourceType.trainedAlgorithmicData:
-        return '${baseUrl}trainedAlgorithmicData';
-      case DigitalSourceType.digitalCapture:
-        return '${baseUrl}digitalCapture';
-      case DigitalSourceType.computationalCapture:
-        return '${baseUrl}computationalCapture';
-      case DigitalSourceType.negativeFilm:
-        return '${baseUrl}negativeFilm';
-      case DigitalSourceType.positiveFilm:
-        return '${baseUrl}positiveFilm';
-      case DigitalSourceType.print:
-        return '${baseUrl}print';
-      case DigitalSourceType.humanEdits:
-        return '${baseUrl}humanEdits';
-      case DigitalSourceType.compositeWithTrainedAlgorithmicMedia:
-        return '${baseUrl}compositeWithTrainedAlgorithmicMedia';
-      case DigitalSourceType.algorithmicallyEnhanced:
-        return '${baseUrl}algorithmicallyEnhanced';
-      case DigitalSourceType.digitalCreation:
-        return '${baseUrl}digitalCreation';
-      case DigitalSourceType.dataDrivenMedia:
-        return '${baseUrl}dataDrivenMedia';
-      case DigitalSourceType.trainedAlgorithmicMedia:
-        return '${baseUrl}trainedAlgorithmicMedia';
-      case DigitalSourceType.algorithmicMedia:
-        return '${baseUrl}algorithmicMedia';
-      case DigitalSourceType.screenCapture:
-        return '${baseUrl}screenCapture';
-      case DigitalSourceType.virtualRecording:
-        return '${baseUrl}virtualRecording';
-      case DigitalSourceType.composite:
-        return '${baseUrl}composite';
-      case DigitalSourceType.compositeCapture:
-        return '${baseUrl}compositeCapture';
-      case DigitalSourceType.compositeSynthetic:
-        return '${baseUrl}compositeSynthetic';
-    }
-  }
 }
 
 /// Options for building manifests
@@ -968,7 +903,7 @@ class BuilderOptions {
   Map<String, dynamic> toMap() {
     return {
       'intent': intent?.name,
-      'digitalSourceType': digitalSourceType?.name,
+      'digitalSourceType': digitalSourceType?.url,
       'embed': embed,
       'remoteUrl': remoteUrl,
     };
@@ -1058,7 +993,7 @@ class BuilderArchive {
 /// await builder.addIngredient(
 ///   data: parentImageBytes,
 ///   mimeType: 'image/jpeg',
-///   config: IngredientConfig(relationship: IngredientRelationship.parentOf),
+///   config: IngredientConfig(relationship: Relationship.parentOf),
 /// );
 /// ```
 ///
@@ -1079,7 +1014,7 @@ abstract class ManifestBuilder {
   void setRemoteUrl(String url);
 
   /// Add a resource (thumbnail, icon, etc.)
-  Future<void> addResource(ResourceRef resource);
+  Future<void> addResource(BuilderResource resource);
 
   /// Add an ingredient from data
   Future<void> addIngredient({

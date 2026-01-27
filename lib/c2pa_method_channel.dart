@@ -654,7 +654,7 @@ class MethodChannelManifestBuilder implements ManifestBuilder {
   }
 
   @override
-  Future<void> addResource(ResourceRef resource) async {
+  Future<void> addResource(BuilderResource resource) async {
     _checkDisposed();
     await _platform.builderAddResource(_handle, resource.uri, resource.data);
   }

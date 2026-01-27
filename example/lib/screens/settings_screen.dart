@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import '../services/c2pa_manager.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -84,6 +85,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _isCheckingHardware = false;
         });
       }
+    }
+  }
+
+  Future<void> _loadTestCertsForCustomPem() async {
+    try {
+      final cert = await rootBundle.loadString('assets/test_certs/test_es256_cert.pem');
+      final key = await rootBundle.loadString('assets/test_certs/test_es256_key.pem');
+      setState(() {
+        _certController.text = cert;
+        _keyController.text = key;
+      });
+      _showSnackBar('Test certificates loaded');
+    } catch (e) {
+      _showSnackBar('Failed to load test certificates: $e');
     }
   }
 
@@ -419,16 +434,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
             border: OutlineInputBorder(),
           ),
           maxLines: 5,
-          obscureText: true,
         ),
         const SizedBox(height: 16),
         Row(
           children: [
             Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _loadTestCertsForCustomPem,
+                icon: const Icon(Icons.download),
+                label: const Text('Load Test Certs'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
               child: ElevatedButton.icon(
                 onPressed: _saveCustomCredentials,
                 icon: const Icon(Icons.save),
-                label: const Text('Save Credentials'),
+                label: const Text('Save'),
               ),
             ),
           ],
@@ -452,38 +474,38 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Widget _buildCallbackConfig() {
     return _buildConfigSection(
-      title: 'Callback Signer (Demo)',
+      title: 'Callback Signer',
       icon: Icons.code,
       children: [
         const Text(
-          'The callback signer allows you to implement custom signing logic, '
-          'such as integrating with an HSM or external signing service.',
+          'The callback signer demonstrates custom signing logic using a Dart callback. '
+          'This example uses pointycastle to perform ECDSA signing with the test certificates.',
         ),
         const SizedBox(height: 16),
         Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: Colors.blue.shade50,
+            color: Colors.green.shade50,
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: Colors.blue.shade200),
+            border: Border.all(color: Colors.green.shade200),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
-                  Icon(Icons.info, color: Colors.blue.shade700),
+                  Icon(Icons.check_circle, color: Colors.green.shade700),
                   const SizedBox(width: 12),
                   const Text(
-                    'Demo Mode',
+                    'Ready to Sign',
                     style: TextStyle(fontWeight: FontWeight.bold),
                   ),
                 ],
               ),
               const SizedBox(height: 8),
               const Text(
-                'This demo will fail intentionally to show the callback mechanism. '
-                'In production, implement your custom signing logic in the callback.',
+                'Uses bundled test certificates with custom Dart-based ECDSA signing. '
+                'In production, replace the callback with your HSM or signing service integration.',
                 style: TextStyle(fontSize: 12),
               ),
             ],

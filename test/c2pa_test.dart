@@ -251,6 +251,126 @@ void main() {
       expect(mockPlatform.methodCalls.last.method, 'createBuilder');
     });
 
+    test('createBuilder with ManifestDefinition.created', () async {
+      final manifest = ManifestDefinition.created(
+        title: 'Digital Photo',
+        claimGenerator: ClaimGeneratorInfo(
+          name: 'TestApp',
+          version: '1.0.0',
+        ),
+        sourceType: DigitalSourceType.digitalCapture,
+      );
+
+      final builder = await c2pa.createBuilder(manifest.toJsonString());
+      expect(builder, isNotNull);
+
+      final call = mockPlatform.methodCalls.last;
+      expect(call.method, 'createBuilder');
+      expect(call.arguments!['manifestJson'], contains('Digital Photo'));
+      expect(call.arguments!['manifestJson'], contains('TestApp/1.0.0'));
+      expect(call.arguments!['manifestJson'], contains('c2pa.created'));
+    });
+
+    test('createBuilder with ManifestDefinition.edited', () async {
+      final manifest = ManifestDefinition.edited(
+        title: 'Edited Photo',
+        claimGenerator: ClaimGeneratorInfo(name: 'PhotoEditor', version: '2.0'),
+        actions: [
+          Action.cropped(softwareAgent: 'PhotoEditor/2.0'),
+          Action.filtered(
+            softwareAgent: 'PhotoEditor/2.0',
+            parameters: {'filter': 'brightness'},
+          ),
+        ],
+      );
+
+      final builder = await c2pa.createBuilder(manifest.toJsonString());
+      expect(builder, isNotNull);
+
+      final call = mockPlatform.methodCalls.last;
+      expect(call.arguments!['manifestJson'], contains('Edited Photo'));
+      expect(call.arguments!['manifestJson'], contains('c2pa.cropped'));
+      expect(call.arguments!['manifestJson'], contains('c2pa.filtered'));
+    });
+
+    test('createBuilder with ManifestDefinition.aiGenerated', () async {
+      final manifest = ManifestDefinition.aiGenerated(
+        title: 'AI Generated Image',
+        claimGenerator: ClaimGeneratorInfo(name: 'AI Art', version: '1.0'),
+        sourceType: DigitalSourceType.trainedAlgorithmicMedia,
+        parameters: {'model': 'test-model', 'prompt': 'landscape'},
+        trainingMining: TrainingMiningAssertion(
+          entries: [
+            TrainingMiningEntry.aiTraining(
+              permission: TrainingMiningPermission.notAllowed,
+            ),
+            TrainingMiningEntry.dataMining(
+              permission: TrainingMiningPermission.constrained,
+              constraintInfo: 'Research only',
+            ),
+          ],
+        ),
+      );
+
+      final builder = await c2pa.createBuilder(manifest.toJsonString());
+      expect(builder, isNotNull);
+
+      final call = mockPlatform.methodCalls.last;
+      expect(call.arguments!['manifestJson'], contains('AI Generated Image'));
+      expect(call.arguments!['manifestJson'], contains('c2pa.ai_generated'));
+      expect(call.arguments!['manifestJson'], contains('trainedAlgorithmicMedia'));
+      expect(call.arguments!['manifestJson'], contains('c2pa.training-mining'));
+    });
+
+    test('createBuilder with full ManifestDefinition', () async {
+      final manifest = ManifestDefinition(
+        title: 'Complete Manifest Test',
+        claimGeneratorInfo: [
+          ClaimGeneratorInfo(name: 'TestApp', version: '1.0.0'),
+        ],
+        assertions: [
+          ActionsAssertion(
+            actions: [
+              Action.created(
+                sourceType: DigitalSourceType.digitalCapture,
+                softwareAgent: 'Camera App',
+              ),
+              Action.edited(
+                softwareAgent: 'Editor App',
+                changes: [
+                  RegionOfInterest.spatial(
+                    shape: Shape.rectangle(
+                      origin: Coordinate(x: 0, y: 0),
+                      width: 100,
+                      height: 100,
+                    ),
+                    role: Role.edited,
+                  ),
+                ],
+              ),
+            ],
+          ),
+          CreativeWorkAssertion(
+            author: 'Test Author',
+            copyrightNotice: '2024 Test Author',
+          ),
+        ],
+        ingredients: [
+          Ingredient.parent(title: 'Original Photo'),
+        ],
+        vendor: 'test-vendor',
+        format: 'image/jpeg',
+      );
+
+      final builder = await c2pa.createBuilder(manifest.toJsonString());
+      expect(builder, isNotNull);
+
+      final call = mockPlatform.methodCalls.last;
+      expect(call.arguments!['manifestJson'], contains('Complete Manifest Test'));
+      expect(call.arguments!['manifestJson'], contains('Test Author'));
+      expect(call.arguments!['manifestJson'], contains('Original Photo'));
+    });
+
     test('createBuilderFromArchive creates builder', () async {
       final archiveData = Uint8List.fromList([0x50, 0x4B, 0x03, 0x04]);
       final builder = await c2pa.createBuilderFromArchive(archiveData);
@@ -291,7 +411,7 @@ void main() {
       final thumbnail = Uint8List.fromList([0xFF, 0xD8, 0xFF, 0xE0]);
 
       await builder.addResource(
-        ResourceRef(
+        BuilderResource(
           uri: 'c2pa:thumbnail.jpg',
           data: thumbnail,
           mimeType: 'image/jpeg',
@@ -313,7 +433,7 @@ void main() {
         mimeType: 'image/jpeg',
         config: IngredientConfig(
           title: 'Test Ingredient',
-          relationship: IngredientRelationship.parentOf,
+          relationship: Relationship.parentOf,
         ),
       );
 
@@ -641,7 +761,7 @@ void main() {
       test('toJson serializes relationship correctly', () {
         final config = IngredientConfig(
           title: 'Test Ingredient',
-          relationship: IngredientRelationship.parentOf,
+          relationship: Relationship.parentOf,
         );
 
         final json = config.toJson();

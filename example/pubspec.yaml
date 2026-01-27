@@ -19,6 +19,8 @@ dependencies:
   webview_flutter: ^4.10.0
   share_plus: ^10.1.4
   shared_preferences: ^2.2.2
+  pointycastle: ^4.0.0
+  asn1lib: ^1.6.5
 
 dev_dependencies:
   integration_test:

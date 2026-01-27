@@ -283,7 +283,7 @@ void main() {
     testWidgets('IngredientConfig as parentOf', (tester) async {
       final config = IngredientConfig(
         title: 'Parent Asset',
-        relationship: IngredientRelationship.parentOf,
+        relationship: Relationship.parentOf,
       );
 
       final map = config.toMap();
@@ -294,7 +294,7 @@ void main() {
     testWidgets('IngredientConfig toJson produces valid JSON', (tester) async {
       final config = IngredientConfig(
         title: 'Test Ingredient',
-        relationship: IngredientRelationship.componentOf,
+        relationship: Relationship.componentOf,
       );
 
       final jsonStr = config.toJson();

@@ -81,9 +81,11 @@ class _HomeScreenState extends State<HomeScreen> {
       await file.writeAsBytes(signedData);
       _showSuccessOverlay('Image signed and saved!');
     } else {
+      final errorMessage = _manager.lastError ?? "Unknown error";
+      debugPrint('C2PA signing error: $errorMessage');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${_manager.lastError ?? "Unknown error"}')),
+          SnackBar(content: Text('Error: $errorMessage')),
         );
       }
     }

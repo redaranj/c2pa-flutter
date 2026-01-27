@@ -1,9 +1,12 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:c2pa_flutter/c2pa.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:pointycastle/export.dart' as pc;
+import 'package:asn1lib/asn1lib.dart' as asn1;
 
 /// Signing modes available in the example app
 enum SigningMode {
@@ -335,7 +338,22 @@ class C2paManager extends ChangeNotifier {
     }
   }
 
+  /// Sign an image as a new digital capture
   Future<Uint8List?> signImage(Uint8List imageData, String mimeType) async {
+    return signImageAsCapture(
+      imageData: imageData,
+      mimeType: mimeType,
+      title: 'Signed Image',
+    );
+  }
+
+  /// Sign an image as a new digital capture (camera photo)
+  Future<Uint8List?> signImageAsCapture({
+    required Uint8List imageData,
+    required String mimeType,
+    required String title,
+    String? author,
+  }) async {
     _isProcessing = true;
     _lastError = null;
     notifyListeners();
@@ -348,26 +366,231 @@ class C2paManager extends ChangeNotifier {
         return null;
       }
 
-      // Create the manifest JSON with title, claim_generator, and any assertions
-      // These must be set at creation time as the native C2PA library doesn't
-      // support modifying them after builder creation.
-      final manifestJson = jsonEncode({
-        'title': 'Signed Image',
-        'claim_generator': 'C2PA Flutter Example/1.0.0',
-      });
+      // Create manifest for a new digital capture using type-safe API
+      final manifest = ManifestDefinition.created(
+        title: title,
+        claimGenerator: ClaimGeneratorInfo(
+          name: 'C2PA Flutter Example',
+          version: '1.0.0',
+        ),
+        sourceType: DigitalSourceType.digitalCapture,
+        additionalAssertions: [
+          if (author != null)
+            CreativeWorkAssertion(author: author),
+        ],
+      );
 
-      builder = await _c2pa.createBuilder(manifestJson);
-
-      // Set intent (supported by native builder API)
+      builder = await _c2pa.createBuilder(manifest.toJsonString());
       builder.setIntent(ManifestIntent.create, DigitalSourceType.digitalCapture);
 
-      // Add the created action (supported by native builder API)
-      builder.addAction(ActionConfig(
-        action: 'c2pa.created',
-        digitalSourceType: DigitalSourceType.digitalCapture,
-      ));
+      final result = await builder.sign(
+        sourceData: imageData,
+        mimeType: mimeType,
+        signer: signer,
+      );
 
-      // Sign the content
+      return result.signedData;
+    } catch (e) {
+      _lastError = e.toString();
+      return null;
+    } finally {
+      builder?.dispose();
+      _isProcessing = false;
+      notifyListeners();
+    }
+  }
+
+  /// Sign an image as edited content
+  Future<Uint8List?> signImageAsEdited({
+    required Uint8List imageData,
+    required String mimeType,
+    required String title,
+    List<String>? editOperations,
+    String? author,
+  }) async {
+    _isProcessing = true;
+    _lastError = null;
+    notifyListeners();
+
+    ManifestBuilder? builder;
+    try {
+      final signer = await _getSigner();
+      if (signer == null) {
+        _lastError = 'No signing credentials available. Please configure in Settings.';
+        return null;
+      }
+
+      // Build list of actions based on edit operations
+      final actions = <Action>[];
+      for (final op in editOperations ?? ['edited']) {
+        switch (op.toLowerCase()) {
+          case 'cropped':
+            actions.add(Action.cropped(
+              softwareAgent: 'C2PA Flutter Example/1.0.0',
+              when: DateTime.now().toUtc().toIso8601String(),
+            ));
+            break;
+          case 'filtered':
+            actions.add(Action.filtered(
+              softwareAgent: 'C2PA Flutter Example/1.0.0',
+              when: DateTime.now().toUtc().toIso8601String(),
+            ));
+            break;
+          case 'resized':
+            actions.add(Action.resized(
+              softwareAgent: 'C2PA Flutter Example/1.0.0',
+              when: DateTime.now().toUtc().toIso8601String(),
+            ));
+            break;
+          default:
+            actions.add(Action.edited(
+              softwareAgent: 'C2PA Flutter Example/1.0.0',
+              when: DateTime.now().toUtc().toIso8601String(),
+            ));
+        }
+      }
+
+      // Create manifest for edited content
+      final manifest = ManifestDefinition.edited(
+        title: title,
+        claimGenerator: ClaimGeneratorInfo(
+          name: 'C2PA Flutter Example',
+          version: '1.0.0',
+        ),
+        actions: actions.isEmpty ? null : actions,
+        additionalAssertions: [
+          if (author != null)
+            CreativeWorkAssertion(author: author),
+        ],
+      );
+
+      builder = await _c2pa.createBuilder(manifest.toJsonString());
+      builder.setIntent(ManifestIntent.edit);
+
+      final result = await builder.sign(
+        sourceData: imageData,
+        mimeType: mimeType,
+        signer: signer,
+      );
+
+      return result.signedData;
+    } catch (e) {
+      _lastError = e.toString();
+      return null;
+    } finally {
+      builder?.dispose();
+      _isProcessing = false;
+      notifyListeners();
+    }
+  }
+
+  /// Sign an AI-generated image
+  Future<Uint8List?> signImageAsAiGenerated({
+    required Uint8List imageData,
+    required String mimeType,
+    required String title,
+    String? modelName,
+    String? prompt,
+    bool allowAiTraining = false,
+    bool allowDataMining = false,
+  }) async {
+    _isProcessing = true;
+    _lastError = null;
+    notifyListeners();
+
+    ManifestBuilder? builder;
+    try {
+      final signer = await _getSigner();
+      if (signer == null) {
+        _lastError = 'No signing credentials available. Please configure in Settings.';
+        return null;
+      }
+
+      // Build parameters map
+      final parameters = <String, String>{};
+      if (modelName != null) parameters['model'] = modelName;
+      if (prompt != null) parameters['prompt'] = prompt;
+
+      // Build training/mining entries
+      final trainingMiningEntries = <TrainingMiningEntry>[
+        TrainingMiningEntry.aiTraining(
+          permission: allowAiTraining
+              ? TrainingMiningPermission.allowed
+              : TrainingMiningPermission.notAllowed,
+        ),
+        TrainingMiningEntry.aiGenerativeTraining(
+          permission: allowAiTraining
+              ? TrainingMiningPermission.allowed
+              : TrainingMiningPermission.notAllowed,
+        ),
+        TrainingMiningEntry.dataMining(
+          permission: allowDataMining
+              ? TrainingMiningPermission.allowed
+              : TrainingMiningPermission.notAllowed,
+        ),
+        TrainingMiningEntry.aiInference(
+          permission: TrainingMiningPermission.allowed,
+        ),
+      ];
+
+      // Create manifest for AI-generated content
+      final manifest = ManifestDefinition.aiGenerated(
+        title: title,
+        claimGenerator: ClaimGeneratorInfo(
+          name: 'C2PA Flutter Example',
+          version: '1.0.0',
+        ),
+        sourceType: DigitalSourceType.trainedAlgorithmicMedia,
+        parameters: parameters.isNotEmpty ? parameters : null,
+        trainingMining: TrainingMiningAssertion(entries: trainingMiningEntries),
+      );
+
+      builder = await _c2pa.createBuilder(manifest.toJsonString());
+      builder.setIntent(
+        ManifestIntent.create,
+        DigitalSourceType.trainedAlgorithmicMedia,
+      );
+
+      final result = await builder.sign(
+        sourceData: imageData,
+        mimeType: mimeType,
+        signer: signer,
+      );
+
+      return result.signedData;
+    } catch (e) {
+      _lastError = e.toString();
+      return null;
+    } finally {
+      builder?.dispose();
+      _isProcessing = false;
+      notifyListeners();
+    }
+  }
+
+  /// Sign an image with custom manifest configuration
+  Future<Uint8List?> signImageWithManifest({
+    required Uint8List imageData,
+    required String mimeType,
+    required ManifestDefinition manifest,
+    ManifestIntent intent = ManifestIntent.create,
+    DigitalSourceType? digitalSourceType,
+  }) async {
+    _isProcessing = true;
+    _lastError = null;
+    notifyListeners();
+
+    ManifestBuilder? builder;
+    try {
+      final signer = await _getSigner();
+      if (signer == null) {
+        _lastError = 'No signing credentials available. Please configure in Settings.';
+        return null;
+      }
+
+      builder = await _c2pa.createBuilder(manifest.toJsonString());
+      builder.setIntent(intent, digitalSourceType);
+
       final result = await builder.sign(
         sourceData: imageData,
         mimeType: mimeType,
@@ -454,23 +677,139 @@ class C2paManager extends ChangeNotifier {
     }
   }
 
-  /// Demo sign callback - in a real app this would integrate with HSM or other
-  /// custom signing infrastructure
+  /// Demo sign callback - demonstrates custom signing using pointycastle
+  /// In a real app this would integrate with HSM or other custom signing infrastructure
   Future<Uint8List> _demoSignCallback(Uint8List data) async {
-    // This is a placeholder - in a real implementation, you would:
-    // 1. Send the data hash to your HSM/signing service
-    // 2. Receive the signature back
-    // 3. Return the signature bytes
-    //
-    // For demo purposes, we just return empty bytes which will cause
-    // the signing to fail (demonstrating the callback mechanism)
     debugPrint('CallbackSigner: Received ${data.length} bytes to sign');
 
-    // In a real app, you would implement actual signing here.
-    // This demo will fail since we're not providing a valid signature.
-    throw UnimplementedError(
-      'Callback signing is a demo feature. '
-      'In production, implement actual HSM/custom signing logic here.'
+    if (_defaultPrivateKey == null) {
+      throw StateError('Private key not loaded');
+    }
+
+    // Sign directly - ECDSA is fast enough for main thread
+    final result = _signDataInIsolate(
+      _SigningParams(data: data, privateKeyPem: _defaultPrivateKey!),
     );
+
+    debugPrint('CallbackSigner: Generated ${result.length} byte signature');
+    return result;
   }
+
 }
+
+/// Parameters for signing in isolate
+class _SigningParams {
+  final Uint8List data;
+  final String privateKeyPem;
+
+  _SigningParams({required this.data, required this.privateKeyPem});
+}
+
+/// Static function to run in isolate
+Uint8List _signDataInIsolate(_SigningParams params) {
+  // Parse the PKCS#8 private key
+  final privateKey = _parsePrivateKeyStatic(params.privateKeyPem);
+
+  // Sign the data using ECDSA with SHA-256
+  final signer = pc.Signer('SHA-256/ECDSA');
+  signer.init(true, pc.PrivateKeyParameter<pc.ECPrivateKey>(privateKey));
+
+  final signature = signer.generateSignature(params.data) as pc.ECSignature;
+
+  // Convert signature to DER format (as expected by C2PA)
+  return _ecSignatureToDerStatic(signature);
+}
+
+/// Parse a PKCS#8 PEM private key into an ECPrivateKey (static version for isolate)
+pc.ECPrivateKey _parsePrivateKeyStatic(String pem) {
+  // Remove PEM headers and decode base64
+  final lines = pem.split('\n')
+      .where((line) => !line.startsWith('-----'))
+      .join('');
+  final bytes = base64.decode(lines);
+
+  // Parse PKCS#8 structure
+  final asn1Parser = asn1.ASN1Parser(bytes);
+  final topSequence = asn1Parser.nextObject() as asn1.ASN1Sequence;
+
+  // PKCS#8 structure: version, algorithmIdentifier, privateKey
+  final privateKeyOctet = topSequence.elements[2] as asn1.ASN1OctetString;
+
+  // Parse the EC private key from the octet string
+  final ecParser = asn1.ASN1Parser(privateKeyOctet.contentBytes());
+  final ecSequence = ecParser.nextObject() as asn1.ASN1Sequence;
+
+  // EC private key structure: version, privateKey, [0] parameters, [1] publicKey
+  final privateKeyBytes = (ecSequence.elements[1] as asn1.ASN1OctetString).contentBytes();
+  final d = _bytesToBigIntStatic(Uint8List.fromList(privateKeyBytes));
+
+  // Use P-256 curve parameters
+  final domainParams = pc.ECDomainParameters('secp256r1');
+
+  return pc.ECPrivateKey(d, domainParams);
+}
+
+/// Convert bytes to BigInt (static version for isolate)
+BigInt _bytesToBigIntStatic(Uint8List bytes) {
+  BigInt result = BigInt.zero;
+  for (int i = 0; i < bytes.length; i++) {
+    result = (result << 8) | BigInt.from(bytes[i]);
+  }
+  return result;
+}
+
+/// Convert EC signature to DER format (static version for isolate)
+Uint8List _ecSignatureToDerStatic(pc.ECSignature signature) {
+  final r = _bigIntToBytesStatic(signature.r);
+  final s = _bigIntToBytesStatic(signature.s);
+
+  // DER encode: SEQUENCE { INTEGER r, INTEGER s }
+  final rEncoded = _derEncodeIntegerStatic(r);
+  final sEncoded = _derEncodeIntegerStatic(s);
+
+  final contentLength = rEncoded.length + sEncoded.length;
+  final result = BytesBuilder();
+
+  // SEQUENCE tag
+  result.addByte(0x30);
+  // Length
+  if (contentLength < 128) {
+    result.addByte(contentLength);
+  } else {
+    result.addByte(0x81);
+    result.addByte(contentLength);
+  }
+  // Content
+  result.add(rEncoded);
+  result.add(sEncoded);
+
+  return result.toBytes();
+}
+
+/// Convert BigInt to bytes (static version for isolate)
+Uint8List _bigIntToBytesStatic(BigInt value) {
+  final bytes = <int>[];
+  var v = value;
+  while (v > BigInt.zero) {
+    bytes.insert(0, (v & BigInt.from(0xff)).toInt());
+    v = v >> 8;
+  }
+  if (bytes.isEmpty) bytes.add(0);
+  return Uint8List.fromList(bytes);
+}
+
+/// DER encode an integer (static version for isolate)
+Uint8List _derEncodeIntegerStatic(Uint8List bytes) {
+  // Add leading zero if high bit is set (to keep it positive)
+  final needsPadding = bytes.isNotEmpty && (bytes[0] & 0x80) != 0;
+  final length = bytes.length + (needsPadding ? 1 : 0);
+
+  final result = BytesBuilder();
+  result.addByte(0x02); // INTEGER tag
+  result.addByte(length);
+  if (needsPadding) result.addByte(0x00);
+  result.add(bytes);
+
+  return result.toBytes();
+}
+
