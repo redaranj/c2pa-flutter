@@ -494,12 +494,9 @@ class MockBuilder implements ManifestBuilder {
   DigitalSourceType? digitalSourceType;
   bool noEmbed = false;
   String? remoteUrl;
-  String? title;
-  String? claimGenerator;
   final Map<String, Uint8List> resources = {};
   final List<MockIngredient> ingredients = [];
   final List<String> actions = [];
-  final List<MockAssertion> assertions = [];
 
   bool _disposed = false;
 
@@ -522,18 +519,6 @@ class MockBuilder implements ManifestBuilder {
     _checkDisposed();
     this.intent = intent;
     this.digitalSourceType = digitalSourceType;
-  }
-
-  @override
-  void setTitle(String newTitle) {
-    _checkDisposed();
-    title = newTitle;
-  }
-
-  @override
-  void setClaimGenerator(String generator) {
-    _checkDisposed();
-    claimGenerator = generator;
   }
 
   @override
@@ -570,28 +555,9 @@ class MockBuilder implements ManifestBuilder {
   }
 
   @override
-  Future<void> addIngredientFromFile({
-    required String path,
-    IngredientConfig? config,
-  }) async {
-    _checkDisposed();
-    _platform._recordCall('builderAddIngredientFromFile', {
-      'handle': _handle,
-      'path': path,
-      'config': config?.toJson(),
-    });
-  }
-
-  @override
   void addAction(ActionConfig action) {
     _checkDisposed();
     actions.add(action.toJson());
-  }
-
-  @override
-  void addAssertion(String label, Map<String, dynamic> data) {
-    _checkDisposed();
-    assertions.add(MockAssertion(label, data));
   }
 
   @override
@@ -612,16 +578,6 @@ class MockBuilder implements ManifestBuilder {
   }
 
   @override
-  Future<void> signFile({
-    required String sourcePath,
-    required String destPath,
-    required SignerInfo signerInfo,
-  }) async {
-    _checkDisposed();
-    await _platform.builderSignFile(_handle, sourcePath, destPath, signerInfo);
-  }
-
-  @override
   void dispose() {
     if (!_disposed) {
       _disposed = true;
@@ -637,12 +593,4 @@ class MockIngredient {
   final String? configJson;
 
   MockIngredient(this.data, this.mimeType, this.configJson);
-}
-
-/// Mock assertion for tracking
-class MockAssertion {
-  final String label;
-  final Map<String, dynamic> data;
-
-  MockAssertion(this.label, this.data);
 }

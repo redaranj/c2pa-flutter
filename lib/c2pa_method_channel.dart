@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
@@ -474,21 +472,6 @@ class MethodChannelManifestBuilder implements ManifestBuilder {
   }
 
   @override
-  void setTitle(String title) {
-    _checkDisposed();
-    _pendingOperations.add({'type': 'setTitle', 'title': title});
-  }
-
-  @override
-  void setClaimGenerator(String generator) {
-    _checkDisposed();
-    _pendingOperations.add({
-      'type': 'setClaimGenerator',
-      'generator': generator,
-    });
-  }
-
-  @override
   void setNoEmbed() {
     _checkDisposed();
     _pendingOperations.add({'type': 'setNoEmbed'});
@@ -522,33 +505,11 @@ class MethodChannelManifestBuilder implements ManifestBuilder {
   }
 
   @override
-  Future<void> addIngredientFromFile({
-    required String path,
-    IngredientConfig? config,
-  }) async {
-    _checkDisposed();
-    await _platform.methodChannel.invokeMethod<void>(
-      'builderAddIngredientFromFile',
-      {'handle': _handle, 'path': path, 'ingredientJson': config?.toJson()},
-    );
-  }
-
-  @override
   void addAction(ActionConfig action) {
     _checkDisposed();
     _pendingOperations.add({
       'type': 'addAction',
       'actionJson': action.toJson(),
-    });
-  }
-
-  @override
-  void addAssertion(String label, Map<String, dynamic> data) {
-    _checkDisposed();
-    _pendingOperations.add({
-      'type': 'addAssertion',
-      'label': label,
-      'data': jsonEncode(data),
     });
   }
 
@@ -572,10 +533,6 @@ class MethodChannelManifestBuilder implements ManifestBuilder {
         case 'addAction':
           await _platform.builderAddAction(_handle, op['actionJson'] as String);
           break;
-        case 'addAssertion':
-          // Assertions are added via the manifest JSON definition
-          // This would need native support for dynamic assertion addition
-          break;
       }
     }
     _pendingOperations.clear();
@@ -598,17 +555,6 @@ class MethodChannelManifestBuilder implements ManifestBuilder {
     _checkDisposed();
     await _applyPendingOperations();
     return _platform.builderSign(_handle, sourceData, mimeType, signerInfo);
-  }
-
-  @override
-  Future<void> signFile({
-    required String sourcePath,
-    required String destPath,
-    required SignerInfo signerInfo,
-  }) async {
-    _checkDisposed();
-    await _applyPendingOperations();
-    await _platform.builderSignFile(_handle, sourcePath, destPath, signerInfo);
   }
 
   @override

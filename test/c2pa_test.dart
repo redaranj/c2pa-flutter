@@ -335,16 +335,6 @@ void main() {
       expect(mockBuilder.actions, hasLength(1));
     });
 
-    test('builder addAssertion works', () async {
-      final builder = await c2pa.createBuilder('{}');
-
-      builder.addAssertion('custom.assertion', {'key': 'value'});
-
-      final mockBuilder = mockPlatform.builders[builder.handle] as MockBuilder;
-      expect(mockBuilder.assertions, hasLength(1));
-      expect(mockBuilder.assertions.first.label, 'custom.assertion');
-    });
-
     test('builder toArchive returns archive', () async {
       final builder = await c2pa.createBuilder('{}');
       final archive = await builder.toArchive();
@@ -366,21 +356,6 @@ void main() {
       expect(result.manifestSize, greaterThanOrEqualTo(0));
     });
 
-    test('builder signFile works', () async {
-      final builder = await c2pa.createBuilder('{}');
-
-      await builder.signFile(
-        sourcePath: '/input.jpg',
-        destPath: '/output.jpg',
-        signerInfo: signerInfo,
-      );
-
-      expect(
-        mockPlatform.methodCalls.any((c) => c.method == 'builderSignFile'),
-        true,
-      );
-    });
-
     test('builder dispose works', () async {
       final builder = await c2pa.createBuilder('{}');
       final handle = builder.handle;
@@ -394,7 +369,7 @@ void main() {
       final builder = await c2pa.createBuilder('{}');
       builder.dispose();
 
-      expect(() => builder.setTitle('Test'), throwsStateError);
+      expect(() => builder.setIntent(ManifestIntent.create), throwsStateError);
     });
   });
 

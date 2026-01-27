@@ -747,17 +747,30 @@ class BuilderArchive {
 ///
 /// ## Basic Usage
 ///
+/// The manifest JSON passed to [C2pa.createBuilder] should contain the title,
+/// claim_generator, and any assertions. These cannot be modified after builder
+/// creation as the native C2PA libraries don't support dynamic modification.
+///
 /// ```dart
-/// final builder = await c2pa.createBuilder('{"title": "My Photo"}');
+/// final manifestJson = jsonEncode({
+///   'title': 'My Photo',
+///   'claim_generator': 'MyApp/1.0',
+///   'assertions': [
+///     {
+///       'label': 'c2pa.actions',
+///       'data': {
+///         'actions': [
+///           {'action': 'c2pa.created', 'digitalSourceType': '...'}
+///         ]
+///       }
+///     }
+///   ]
+/// });
+///
+/// final builder = await c2pa.createBuilder(manifestJson);
 ///
 /// // Set the intent (required)
 /// builder.setIntent(ManifestIntent.create, DigitalSourceType.digitalCapture);
-///
-/// // Optional: Add actions
-/// builder.addAction(ActionConfig(
-///   action: 'c2pa.created',
-///   softwareAgent: 'MyApp/1.0',
-/// ));
 ///
 /// // Sign and get result
 /// final result = await builder.sign(
@@ -793,12 +806,6 @@ abstract class ManifestBuilder {
   /// Set the builder intent
   void setIntent(ManifestIntent intent, [DigitalSourceType? digitalSourceType]);
 
-  /// Set the manifest title
-  void setTitle(String title);
-
-  /// Set the claim generator
-  void setClaimGenerator(String generator);
-
   /// Disable embedding the manifest in the asset
   void setNoEmbed();
 
@@ -815,17 +822,8 @@ abstract class ManifestBuilder {
     IngredientConfig? config,
   });
 
-  /// Add an ingredient from a file path
-  Future<void> addIngredientFromFile({
-    required String path,
-    IngredientConfig? config,
-  });
-
   /// Add an action to the manifest
   void addAction(ActionConfig action);
-
-  /// Add a custom assertion
-  void addAssertion(String label, Map<String, dynamic> data);
 
   /// Export the builder to an archive for later use
   Future<BuilderArchive> toArchive();
@@ -834,13 +832,6 @@ abstract class ManifestBuilder {
   Future<BuilderSignResult> sign({
     required Uint8List sourceData,
     required String mimeType,
-    required SignerInfo signerInfo,
-  });
-
-  /// Sign the manifest and write to a file
-  Future<void> signFile({
-    required String sourcePath,
-    required String destPath,
     required SignerInfo signerInfo,
   });
 
@@ -1084,6 +1075,10 @@ class C2pa {
   ///
   /// A raw manifest (application/c2pa format) cannot be embedded directly.
   /// This converts it to an embeddable format for the specified MIME type.
+  ///
+  /// **Android note**: This method returns the input unchanged on Android as
+  /// the native library does not support this operation. The manifest bytes
+  /// from [signHashedEmbeddable] are already in the correct format on Android.
   Future<Uint8List> formatEmbeddable({
     required String mimeType,
     required Uint8List manifestBytes,

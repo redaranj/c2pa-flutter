@@ -1,5 +1,6 @@
 package org.guardianproject.c2pa
 
+import android.util.Log
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -694,7 +695,9 @@ class C2paPlugin : FlutterPlugin, MethodCallHandler {
             val signerInfo = parseSignerInfo(signerInfoMap)
             val signer = Signer.fromInfo(signerInfo)
 
-            // Builder doesn't have signFile - read file, sign, and write output
+            // Note: The native C2PA library doesn't have a signFile method, so we read the
+            // entire file into memory. For large files (especially videos), this may cause
+            // out-of-memory errors. Consider using sign() with streamed data instead.
             val sourceFile = File(sourcePath)
             val sourceData = sourceFile.readBytes()
 
@@ -833,9 +836,10 @@ class C2paPlugin : FlutterPlugin, MethodCallHandler {
             return
         }
 
-        // formatEmbeddable is not available in the Android C2PA library
-        // The manifest bytes from signDataHashedEmbeddable are already in the correct format
-        // Return the manifest bytes as-is
+        // formatEmbeddable is not available in the Android C2PA library.
+        // The manifest bytes from signDataHashedEmbeddable are already in the correct format.
+        // Return the manifest bytes unchanged.
+        Log.w("C2paPlugin", "formatEmbeddable: Not supported on Android, returning input unchanged")
         result.success(manifestBytes)
     }
 
@@ -934,7 +938,7 @@ class C2paPlugin : FlutterPlugin, MethodCallHandler {
             "screenCapture" -> DigitalSourceType.SCREEN_CAPTURE
             "composite" -> DigitalSourceType.COMPOSITE
             "algorithmicallyEnhanced" -> DigitalSourceType.ALGORITHMICALLY_ENHANCED
-            "negativeFIlm" -> DigitalSourceType.NEGATIVE_FILM
+            "negativeFilm" -> DigitalSourceType.NEGATIVE_FILM
             "positiveFilm" -> DigitalSourceType.POSITIVE_FILM
             "print" -> DigitalSourceType.PRINT
             else -> DigitalSourceType.DIGITAL_CAPTURE

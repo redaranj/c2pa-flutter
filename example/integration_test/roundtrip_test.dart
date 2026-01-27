@@ -249,13 +249,12 @@ void main() {
     testWidgets('builder sign then read manifest', (tester) async {
       final manifest = jsonEncode({
         'claim_generator': 'c2pa_flutter_builder_test/1.0',
-        'title': 'Builder Test',
+        'title': 'Builder Roundtrip Test',
         'format': 'image/jpeg',
       });
 
       final builder = await c2pa.createBuilder(manifest);
       builder.setIntent(ManifestIntent.create, DigitalSourceType.digitalCapture);
-      builder.setTitle('Builder Roundtrip Test');
 
       builder.addAction(ActionConfig(
         action: 'c2pa.created',
@@ -290,14 +289,13 @@ void main() {
     testWidgets('builder archive roundtrip', (tester) async {
       final manifest = jsonEncode({
         'claim_generator': 'c2pa_flutter_archive_test/1.0',
-        'title': 'Archive Test',
+        'title': 'Archive Test Image',
         'format': 'image/jpeg',
       });
 
       // Create initial builder and configure it
       final builder1 = await c2pa.createBuilder(manifest);
       builder1.setIntent(ManifestIntent.create, DigitalSourceType.digitalCapture);
-      builder1.setTitle('Archive Test Image');
 
       // Export to archive
       final archive = await builder1.toArchive();

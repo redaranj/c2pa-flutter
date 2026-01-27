@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:c2pa_flutter/c2pa.dart';
 
 enum SigningMode {
@@ -12,13 +15,13 @@ class C2paManager extends ChangeNotifier {
   C2paManager._internal();
 
   final C2pa _c2pa = C2pa();
-  
+
   bool _isProcessing = false;
   bool get isProcessing => _isProcessing;
-  
+
   String? _lastError;
   String? get lastError => _lastError;
-  
+
   SigningMode _signingMode = SigningMode.defaultCerts;
   SigningMode get signingMode => _signingMode;
   set signingMode(SigningMode mode) {
@@ -28,14 +31,18 @@ class C2paManager extends ChangeNotifier {
 
   String? _customCertificate;
   String? _customPrivateKey;
-  
+
+  // Cached default credentials loaded from assets
+  String? _defaultCertificate;
+  String? _defaultPrivateKey;
+
   void setCustomCredentials(String certificate, String privateKey) {
     _customCertificate = certificate;
     _customPrivateKey = privateKey;
     notifyListeners();
   }
 
-  bool get hasCustomCredentials => 
+  bool get hasCustomCredentials =>
       _customCertificate != null && _customPrivateKey != null;
 
   Future<String?> getVersion() async {
@@ -51,7 +58,8 @@ class C2paManager extends ChangeNotifier {
     }
   }
 
-  Future<String?> readManifestFromBytes(Uint8List data, String mimeType) async {
+  Future<String?> readManifestFromBytes(
+      Uint8List data, String mimeType) async {
     try {
       return await _c2pa.readBytes(data, mimeType);
     } catch (e) {
@@ -60,24 +68,59 @@ class C2paManager extends ChangeNotifier {
     }
   }
 
+  /// Load default credentials from assets
+  Future<void> _loadDefaultCredentials() async {
+    if (_defaultCertificate != null && _defaultPrivateKey != null) {
+      return;
+    }
+
+    try {
+      _defaultCertificate =
+          await rootBundle.loadString('assets/test_certs/test_es256_cert.pem');
+      _defaultPrivateKey =
+          await rootBundle.loadString('assets/test_certs/test_es256_key.pem');
+    } catch (e) {
+      debugPrint('Failed to load default credentials from assets: $e');
+      _lastError = 'Failed to load signing credentials';
+    }
+  }
+
   Future<Uint8List?> signImage(Uint8List imageData, String mimeType) async {
     _isProcessing = true;
     _lastError = null;
     notifyListeners();
 
+    ManifestBuilder? builder;
     try {
-      final signerInfo = _getSignerInfo();
+      final signerInfo = await _getSignerInfo();
       if (signerInfo == null) {
         _lastError = 'No signing credentials available';
         return null;
       }
 
-      final manifestJson = _buildManifestJson();
-      
-      final result = await _c2pa.signBytes(
+      // Create the manifest JSON with title, claim_generator, and any assertions
+      // These must be set at creation time as the native C2PA library doesn't
+      // support modifying them after builder creation.
+      final manifestJson = jsonEncode({
+        'title': 'Signed Image',
+        'claim_generator': 'C2PA Flutter Example/1.0.0',
+      });
+
+      builder = await _c2pa.createBuilder(manifestJson);
+
+      // Set intent (supported by native builder API)
+      builder.setIntent(ManifestIntent.create, DigitalSourceType.digitalCapture);
+
+      // Add the created action (supported by native builder API)
+      builder.addAction(ActionConfig(
+        action: 'c2pa.created',
+        digitalSourceType: DigitalSourceType.digitalCapture,
+      ));
+
+      // Sign the content
+      final result = await builder.sign(
         sourceData: imageData,
         mimeType: mimeType,
-        manifestJson: manifestJson,
         signerInfo: signerInfo,
       );
 
@@ -86,18 +129,23 @@ class C2paManager extends ChangeNotifier {
       _lastError = e.toString();
       return null;
     } finally {
+      builder?.dispose();
       _isProcessing = false;
       notifyListeners();
     }
   }
 
-  SignerInfo? _getSignerInfo() {
+  Future<SignerInfo?> _getSignerInfo() async {
     switch (_signingMode) {
       case SigningMode.defaultCerts:
+        await _loadDefaultCredentials();
+        if (_defaultCertificate == null || _defaultPrivateKey == null) {
+          return null;
+        }
         return SignerInfo(
           algorithm: SigningAlgorithm.es256,
-          certificatePem: _defaultCertificate,
-          privateKeyPem: _defaultPrivateKey,
+          certificatePem: _defaultCertificate!,
+          privateKeyPem: _defaultPrivateKey!,
         );
       case SigningMode.custom:
         if (_customCertificate == null || _customPrivateKey == null) {
@@ -110,29 +158,4 @@ class C2paManager extends ChangeNotifier {
         );
     }
   }
-
-  String _buildManifestJson() {
-    return '{"claim_generator":"C2PA Flutter Example/1.0.0","title":"Signed Image","assertions":[{"label":"c2pa.actions","data":{"actions":[{"action":"c2pa.created","digitalSourceType":"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture"}]}}]}';
-  }
-
-  static const String _defaultCertificate = '''-----BEGIN CERTIFICATE-----
-MIICJjCCAcygAwIBAgIUY0l1hLGgFqaXxsDpVn2sdDTdiU4wCgYIKoZIzj0EAwIw
-WTELMAkGA1UEBhMCVVMxEzARBgNVBAgMCkNhbGlmb3JuaWExEjAQBgNVBAcMCVNv
-bWV3aGVyZTEOMAwGA1UECgwFQzJQQTExETAPBgNVBAMMCHRlc3QuY29tMB4XDTI0
-MDEwMTAwMDAwMFoXDTI1MDEwMTAwMDAwMFowWTELMAkGA1UEBhMCVVMxEzARBgNV
-BAgMCkNhbGlmb3JuaWExEjAQBgNVBAcMCVNvbWV3aGVyZTEOMAwGA1UECgwFQzJQ
-QTExETAPBgNVBAMMCHRlc3QuY29tMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE
-qKmZjmXK5MXN+B/U0XE2BhW3XBv3LL0tGJEwBgW0rUqIg0n0i0bKVk2O2G0hk8hO
-P3G4ChEkMy8LH0Oe3/tFnqNjMGEwHQYDVR0OBBYEFMVzb4Gp7gLJD/gR9G+vL2Pf
-zV0dMB8GA1UdIwQYMBaAFMVzb4Gp7gLJD/gR9G+vL2PfzV0dMA8GA1UdEwEB/wQF
-MAMBAf8wDgYDVR0PAQH/BAQDAgGGMAoGCCqGSM49BAMCA0gAMEUCIQCqRN0W8MHh
-5gLREQGhtrHjLm9cXzBBmWD/U1dDcpzUxQIgH8R0gNTPYSQnPV0G0YYDcGZhJ1Zk
-upmIpfJaxuw/VzE=
------END CERTIFICATE-----''';
-
-  static const String _defaultPrivateKey = '''-----BEGIN PRIVATE KEY-----
-MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgevZzL1gdAFr88hb2
-OF/2NxApJCzGCEDdfSp6VQO30hyhRANCAAT+PnBQOggMVBsGXjH/ZuO6fZK0zPJ3
-X4MYPCbKp3L6L0Gj2Z3hJNzI0pPTEsVYrGlNvlMG7VL/rl3hT2VH51Bt
------END PRIVATE KEY-----''';
 }

@@ -185,15 +185,6 @@ void main() {
       builder.dispose();
     });
 
-    testWidgets('ManifestBuilder can set title and generator', (tester) async {
-      final builder = await c2pa.createBuilder(basicManifest);
-
-      builder.setTitle('Integration Test Image');
-      builder.setClaimGenerator('c2pa_flutter_integration_test/1.0');
-
-      builder.dispose();
-    });
-
     testWidgets('ManifestBuilder can add actions', (tester) async {
       final builder = await c2pa.createBuilder(basicManifest);
 
@@ -208,20 +199,6 @@ void main() {
         when: DateTime.now(),
         softwareAgent: 'c2pa_flutter_test',
       ));
-
-      builder.dispose();
-    });
-
-    testWidgets('ManifestBuilder can add assertions', (tester) async {
-      final builder = await c2pa.createBuilder(basicManifest);
-
-      builder.addAssertion('stds.schema-org.CreativeWork', {
-        '@context': 'https://schema.org',
-        '@type': 'CreativeWork',
-        'author': [
-          {'@type': 'Person', 'name': 'Test Author'}
-        ],
-      });
 
       builder.dispose();
     });
@@ -255,7 +232,6 @@ void main() {
     testWidgets('ManifestBuilder toArchive produces archive', (tester) async {
       final builder = await c2pa.createBuilder(basicManifest);
       builder.setIntent(ManifestIntent.create, DigitalSourceType.digitalCapture);
-      builder.setTitle('Archive Test');
 
       final archive = await builder.toArchive();
 
