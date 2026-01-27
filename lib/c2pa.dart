@@ -1352,6 +1352,75 @@ class C2pa {
     return C2paPlatform.instance.exportPublicKey(keyAlias);
   }
 
+  /// Import a private key and certificate chain into the platform's keystore.
+  ///
+  /// This allows using externally generated keys (e.g., test certificates)
+  /// with the Keystore signer. The private key must be in PKCS#8 PEM format.
+  ///
+  /// Note: On Android, this imports into AndroidKeyStore. The key will not
+  /// have hardware protection even if StrongBox is available.
+  Future<void> importKey({
+    required String keyAlias,
+    required String privateKeyPem,
+    required String certificateChainPem,
+  }) {
+    return C2paPlatform.instance.importKey(
+      keyAlias: keyAlias,
+      privateKeyPem: privateKeyPem,
+      certificateChainPem: certificateChainPem,
+    );
+  }
+
+  /// Create a Certificate Signing Request (CSR) for a hardware-backed key.
+  ///
+  /// The key must already exist in the platform keystore (created via [createKey]).
+  /// Returns a PEM-encoded CSR that can be submitted to a signing server.
+  Future<String> createCSR({
+    required String keyAlias,
+    required String commonName,
+    String? organization,
+    String? organizationalUnit,
+    String? country,
+    String? state,
+    String? locality,
+  }) {
+    return C2paPlatform.instance.createCSR(
+      keyAlias: keyAlias,
+      commonName: commonName,
+      organization: organization,
+      organizationalUnit: organizationalUnit,
+      country: country,
+      state: state,
+      locality: locality,
+    );
+  }
+
+  /// Enroll a hardware-backed key with a signing server.
+  ///
+  /// This creates a hardware key (if it doesn't exist), generates a CSR,
+  /// submits it to the signing server, and returns the certificate chain.
+  ///
+  /// Returns a map containing:
+  /// - `certificateChain`: The PEM-encoded certificate chain from the server
+  /// - `keyAlias`: The key alias used
+  Future<Map<String, dynamic>> enrollHardwareKey({
+    required String keyAlias,
+    required String signingServerUrl,
+    String? bearerToken,
+    String? commonName,
+    String? organization,
+    bool useStrongBox = false,
+  }) {
+    return C2paPlatform.instance.enrollHardwareKey(
+      keyAlias: keyAlias,
+      signingServerUrl: signingServerUrl,
+      bearerToken: bearerToken,
+      commonName: commonName,
+      organization: organization,
+      useStrongBox: useStrongBox,
+    );
+  }
+
   // ---------------------------------------------------------------------------
   // Settings API
   // ---------------------------------------------------------------------------

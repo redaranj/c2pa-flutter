@@ -253,6 +253,37 @@ abstract class C2paPlatform extends PlatformInterface {
     throw UnimplementedError('exportPublicKey() has not been implemented.');
   }
 
+  Future<void> importKey({
+    required String keyAlias,
+    required String privateKeyPem,
+    required String certificateChainPem,
+  }) {
+    throw UnimplementedError('importKey() has not been implemented.');
+  }
+
+  Future<String> createCSR({
+    required String keyAlias,
+    required String commonName,
+    String? organization,
+    String? organizationalUnit,
+    String? country,
+    String? state,
+    String? locality,
+  }) {
+    throw UnimplementedError('createCSR() has not been implemented.');
+  }
+
+  Future<Map<String, dynamic>> enrollHardwareKey({
+    required String keyAlias,
+    required String signingServerUrl,
+    String? bearerToken,
+    String? commonName,
+    String? organization,
+    bool useStrongBox = false,
+  }) {
+    throw UnimplementedError('enrollHardwareKey() has not been implemented.');
+  }
+
   // ===========================================================================
   // Settings API
   // ===========================================================================

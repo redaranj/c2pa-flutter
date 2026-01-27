@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
@@ -710,11 +711,27 @@ Uint8List _signDataInIsolate(_SigningParams params) {
   // Parse the PKCS#8 private key
   final privateKey = _parsePrivateKeyStatic(params.privateKeyPem);
 
-  // Sign the data using ECDSA with SHA-256
-  final signer = pc.Signer('SHA-256/ECDSA');
-  signer.init(true, pc.PrivateKeyParameter<pc.ECPrivateKey>(privateKey));
+  // Hash the data with SHA-256 first
+  final digest = pc.SHA256Digest();
+  final hash = digest.process(params.data);
 
-  final signature = signer.generateSignature(params.data) as pc.ECSignature;
+  // Create ECDSA signer with SHA-256
+  // Use FortunaRandom as the secure random source
+  final secureRandom = pc.FortunaRandom();
+  final seedSource = Random.secure();
+  final seeds = List<int>.generate(32, (_) => seedSource.nextInt(256));
+  secureRandom.seed(pc.KeyParameter(Uint8List.fromList(seeds)));
+
+  final signer = pc.ECDSASigner(null, pc.HMac(pc.SHA256Digest(), 64));
+  signer.init(
+    true,
+    pc.ParametersWithRandom(
+      pc.PrivateKeyParameter<pc.ECPrivateKey>(privateKey),
+      secureRandom,
+    ),
+  );
+
+  final signature = signer.generateSignature(hash) as pc.ECSignature;
 
   // Convert signature to DER format (as expected by C2PA)
   return _ecSignatureToDerStatic(signature);

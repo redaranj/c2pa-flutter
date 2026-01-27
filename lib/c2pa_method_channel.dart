@@ -595,6 +595,77 @@ class MethodChannelC2pa extends C2paPlatform {
     return result;
   }
 
+  @override
+  Future<void> importKey({
+    required String keyAlias,
+    required String privateKeyPem,
+    required String certificateChainPem,
+  }) async {
+    await methodChannel.invokeMethod<void>('importKey', {
+      'keyAlias': keyAlias,
+      'privateKeyPem': privateKeyPem,
+      'certificateChainPem': certificateChainPem,
+    });
+  }
+
+  @override
+  Future<String> createCSR({
+    required String keyAlias,
+    required String commonName,
+    String? organization,
+    String? organizationalUnit,
+    String? country,
+    String? state,
+    String? locality,
+  }) async {
+    final result = await methodChannel.invokeMethod<String>('createCSR', {
+      'keyAlias': keyAlias,
+      'commonName': commonName,
+      'organization': organization,
+      'organizationalUnit': organizationalUnit,
+      'country': country,
+      'state': state,
+      'locality': locality,
+    });
+
+    if (result == null) {
+      throw PlatformException(
+        code: 'ERROR',
+        message: 'Failed to create CSR',
+      );
+    }
+
+    return result;
+  }
+
+  @override
+  Future<Map<String, dynamic>> enrollHardwareKey({
+    required String keyAlias,
+    required String signingServerUrl,
+    String? bearerToken,
+    String? commonName,
+    String? organization,
+    bool useStrongBox = false,
+  }) async {
+    final result = await methodChannel.invokeMethod<Map<dynamic, dynamic>>('enrollHardwareKey', {
+      'keyAlias': keyAlias,
+      'signingServerUrl': signingServerUrl,
+      'bearerToken': bearerToken,
+      'commonName': commonName,
+      'organization': organization,
+      'useStrongBox': useStrongBox,
+    });
+
+    if (result == null) {
+      throw PlatformException(
+        code: 'ERROR',
+        message: 'Failed to enroll hardware key',
+      );
+    }
+
+    return Map<String, dynamic>.from(result);
+  }
+
   // ===========================================================================
   // Settings API
   // ===========================================================================

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
+import 'package:c2pa_flutter/c2pa.dart';
 import '../services/c2pa_manager.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -23,10 +24,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // Hardware controllers
   final _hardwareAliasController = TextEditingController();
   final _hardwareCertController = TextEditingController();
+  final _hardwareServerUrlController = TextEditingController(
+    text: 'https://zbjspd6jfv.us-east-2.awsapprunner.com',
+  );
+  final _hardwareBearerTokenController = TextEditingController(
+    text: '2d0c8b6b66c47c3b215976cc808296269322558c6d533d9ce6f3c45a9ccfe811',
+  );
+
+  bool _isEnrolling = false;
 
   // Remote controllers
-  final _remoteUrlController = TextEditingController();
-  final _bearerTokenController = TextEditingController();
+  final _remoteUrlController = TextEditingController(
+    text: 'https://zbjspd6jfv.us-east-2.awsapprunner.com/api/v1/c2pa/configuration',
+  );
+  final _bearerTokenController = TextEditingController(
+    text: '2d0c8b6b66c47c3b215976cc808296269322558c6d533d9ce6f3c45a9ccfe811',
+  );
 
   bool _isCheckingHardware = false;
   bool? _hardwareAvailable;
@@ -48,6 +61,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _keystoreCertController.dispose();
     _hardwareAliasController.dispose();
     _hardwareCertController.dispose();
+    _hardwareServerUrlController.dispose();
+    _hardwareBearerTokenController.dispose();
     _remoteUrlController.dispose();
     _bearerTokenController.dispose();
     super.dispose();
@@ -64,8 +79,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _keystoreCertController.text = _manager.keystoreCertificateChain ?? '';
     _hardwareAliasController.text = _manager.hardwareKeyAlias;
     _hardwareCertController.text = _manager.hardwareCertificateChain ?? '';
-    _remoteUrlController.text = _manager.remoteUrl ?? '';
-    _bearerTokenController.text = _manager.bearerToken ?? '';
+    // Only override defaults if manager has saved values
+    if (_manager.remoteUrl != null && _manager.remoteUrl!.isNotEmpty) {
+      _remoteUrlController.text = _manager.remoteUrl!;
+    }
+    if (_manager.bearerToken != null && _manager.bearerToken!.isNotEmpty) {
+      _bearerTokenController.text = _manager.bearerToken!;
+    }
   }
 
   Future<void> _checkHardwareAvailability() async {
@@ -99,6 +119,92 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _showSnackBar('Test certificates loaded');
     } catch (e) {
       _showSnackBar('Failed to load test certificates: $e');
+    }
+  }
+
+  Future<void> _loadTestCertsForKeystore() async {
+    try {
+      final cert = await rootBundle.loadString('assets/test_certs/test_es256_cert.pem');
+      final key = await rootBundle.loadString('assets/test_certs/test_es256_key.pem');
+
+      // Import the key into Android Keystore
+      final c2pa = C2pa();
+      final keyAlias = _keystoreAliasController.text.isNotEmpty
+          ? _keystoreAliasController.text
+          : 'c2pa_signing_key';
+
+      await c2pa.importKey(
+        keyAlias: keyAlias,
+        privateKeyPem: key,
+        certificateChainPem: cert,
+      );
+
+      setState(() {
+        _keystoreAliasController.text = keyAlias;
+        _keystoreCertController.text = cert;
+      });
+      _showSnackBar('Test key imported to keystore');
+    } catch (e) {
+      _showSnackBar('Failed to import key: $e');
+    }
+  }
+
+  Future<void> _loadTestCertsForHardware() async {
+    try {
+      final cert = await rootBundle.loadString('assets/test_certs/test_es256_cert.pem');
+      setState(() {
+        _hardwareCertController.text = cert;
+      });
+      _showSnackBar('Test certificate chain loaded');
+    } catch (e) {
+      _showSnackBar('Failed to load test certificates: $e');
+    }
+  }
+
+  Future<void> _enrollHardwareKey() async {
+    final serverUrl = _hardwareServerUrlController.text.trim();
+    if (serverUrl.isEmpty) {
+      _showSnackBar('Please enter a signing server URL');
+      return;
+    }
+
+    final keyAlias = _hardwareAliasController.text.isNotEmpty
+        ? _hardwareAliasController.text
+        : 'c2pa_hardware_key';
+
+    final bearerToken = _hardwareBearerTokenController.text.trim();
+
+    setState(() => _isEnrolling = true);
+
+    try {
+      final c2pa = C2pa();
+      final result = await c2pa.enrollHardwareKey(
+        keyAlias: keyAlias,
+        signingServerUrl: serverUrl,
+        bearerToken: bearerToken.isNotEmpty ? bearerToken : null,
+        commonName: 'C2PA Hardware Key',
+        organization: 'C2PA Flutter App',
+        useStrongBox: true,
+      );
+
+      final certChain = result['certificateChain'] as String;
+
+      setState(() {
+        _hardwareAliasController.text = keyAlias;
+        _hardwareCertController.text = certChain;
+      });
+
+      _manager.setHardwareConfig(
+        keyAlias: keyAlias,
+        certificateChainPem: certChain,
+        requireBiometric: _manager.requireBiometric,
+      );
+
+      _showSnackBar('Hardware key enrolled successfully');
+    } catch (e) {
+      _showSnackBar('Enrollment failed: $e');
+    } finally {
+      setState(() => _isEnrolling = false);
     }
   }
 
@@ -547,10 +653,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
         Row(
           children: [
             Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _loadTestCertsForKeystore,
+                icon: const Icon(Icons.download),
+                label: const Text('Load Test Certs'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
               child: ElevatedButton.icon(
                 onPressed: _saveKeystoreConfig,
                 icon: const Icon(Icons.save),
-                label: const Text('Save Configuration'),
+                label: const Text('Save'),
               ),
             ),
           ],
@@ -601,7 +715,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ] else ...[
           const Text(
             'Use hardware-backed signing with StrongBox (Android) or Secure Enclave (iOS). '
-            'Only ES256 algorithm is supported.',
+            'A signing server is required to enroll the hardware key and obtain a certificate.',
           ),
           const SizedBox(height: 16),
           TextField(
@@ -614,14 +728,85 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 16),
           TextField(
-            controller: _hardwareCertController,
+            controller: _hardwareServerUrlController,
             decoration: const InputDecoration(
-              labelText: 'Certificate Chain (PEM)',
-              hintText: '-----BEGIN CERTIFICATE-----',
+              labelText: 'Signing Server URL',
+              hintText: 'http://signing-server:8080',
               border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.cloud),
             ),
-            maxLines: 5,
+            keyboardType: TextInputType.url,
           ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _hardwareBearerTokenController,
+            decoration: const InputDecoration(
+              labelText: 'Bearer Token',
+              hintText: 'Optional authentication token',
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.vpn_key),
+            ),
+            obscureText: true,
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: _isEnrolling ? null : _enrollHardwareKey,
+                  icon: _isEnrolling
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.vpn_key),
+                  label: Text(_isEnrolling ? 'Enrolling...' : 'Enroll Hardware Key'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.blue.shade50,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.blue.shade200),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.info_outline, color: Colors.blue.shade700, size: 18),
+                    const SizedBox(width: 8),
+                    const Text('Enrollment Process', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  '1. Creates a hardware-protected key in StrongBox\n'
+                  '2. Generates a Certificate Signing Request (CSR)\n'
+                  '3. Submits CSR to the signing server\n'
+                  '4. Receives and stores the signed certificate chain',
+                  style: TextStyle(fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+          if (_hardwareCertController.text.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            TextField(
+              controller: _hardwareCertController,
+              decoration: const InputDecoration(
+                labelText: 'Certificate Chain (PEM)',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 3,
+              readOnly: true,
+            ),
+          ],
           const SizedBox(height: 16),
           SwitchListTile(
             title: const Text('Require Biometric Authentication'),

@@ -714,34 +714,51 @@ public class C2paPlugin: NSObject, FlutterPlugin {
             return
         }
 
+        let signerType = signerMap["type"] as? String ?? "pem"
+        let needsBackgroundQueue = signerType == "callback" || signerType == "remote"
+
         createSigner(signerMap, result: result) { signer in
-            do {
-                let sourceStream = try Stream(data: sourceData.data)
+            let signingWork = {
+                do {
+                    let sourceStream = try Stream(data: sourceData.data)
 
-                let tempDir = FileManager.default.temporaryDirectory
-                let destUrl = tempDir.appendingPathComponent(UUID().uuidString)
-                defer { try? FileManager.default.removeItem(at: destUrl) }
+                    let tempDir = FileManager.default.temporaryDirectory
+                    let destUrl = tempDir.appendingPathComponent(UUID().uuidString)
+                    defer { try? FileManager.default.removeItem(at: destUrl) }
 
-                let destStream = try Stream(writeTo: destUrl)
+                    let destStream = try Stream(writeTo: destUrl)
 
-                let manifestBytes = try builder.sign(
-                    format: mimeType,
-                    source: sourceStream,
-                    destination: destStream,
-                    signer: signer
-                )
+                    let manifestBytes = try builder.sign(
+                        format: mimeType,
+                        source: sourceStream,
+                        destination: destStream,
+                        signer: signer
+                    )
 
-                let destData = try Data(contentsOf: destUrl)
+                    let destData = try Data(contentsOf: destUrl)
 
-                let resultMap: [String: Any?] = [
-                    "signedData": FlutterStandardTypedData(bytes: destData),
-                    "manifestBytes": FlutterStandardTypedData(bytes: manifestBytes),
-                    "manifestSize": manifestBytes.count
-                ]
+                    let resultMap: [String: Any?] = [
+                        "signedData": FlutterStandardTypedData(bytes: destData),
+                        "manifestBytes": FlutterStandardTypedData(bytes: manifestBytes),
+                        "manifestSize": manifestBytes.count
+                    ]
 
-                result(resultMap)
-            } catch {
-                result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
+                    DispatchQueue.main.async {
+                        result(resultMap)
+                    }
+                } catch {
+                    DispatchQueue.main.async {
+                        result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
+                    }
+                }
+            }
+
+            if needsBackgroundQueue {
+                DispatchQueue.global(qos: .userInitiated).async {
+                    signingWork()
+                }
+            } else {
+                signingWork()
             }
         }
     }
@@ -761,22 +778,39 @@ public class C2paPlugin: NSObject, FlutterPlugin {
             return
         }
 
+        let signerType = signerMap["type"] as? String ?? "pem"
+        let needsBackgroundQueue = signerType == "callback" || signerType == "remote"
+
         createSigner(signerMap, result: result) { signer in
-            do {
-                let mimeType = self.mimeTypeForExtension((sourcePath as NSString).pathExtension.lowercased())
-                let sourceStream = try Stream(readFrom: URL(fileURLWithPath: sourcePath))
-                let destStream = try Stream(writeTo: URL(fileURLWithPath: destPath))
+            let signingWork = {
+                do {
+                    let mimeType = self.mimeTypeForExtension((sourcePath as NSString).pathExtension.lowercased())
+                    let sourceStream = try Stream(readFrom: URL(fileURLWithPath: sourcePath))
+                    let destStream = try Stream(writeTo: URL(fileURLWithPath: destPath))
 
-                try builder.sign(
-                    format: mimeType,
-                    source: sourceStream,
-                    destination: destStream,
-                    signer: signer
-                )
+                    try builder.sign(
+                        format: mimeType,
+                        source: sourceStream,
+                        destination: destStream,
+                        signer: signer
+                    )
 
-                result(nil)
-            } catch {
-                result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
+                    DispatchQueue.main.async {
+                        result(nil)
+                    }
+                } catch {
+                    DispatchQueue.main.async {
+                        result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
+                    }
+                }
+            }
+
+            if needsBackgroundQueue {
+                DispatchQueue.global(qos: .userInitiated).async {
+                    signingWork()
+                }
+            } else {
+                signingWork()
             }
         }
     }

@@ -20,9 +20,18 @@ import org.contentauth.c2pa.Action
 import org.contentauth.c2pa.KeyStoreSigner
 import org.contentauth.c2pa.StrongBoxSigner
 import org.contentauth.c2pa.WebServiceSigner
+import org.contentauth.c2pa.CertificateManager
 import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
+import java.io.StringReader
+import java.security.KeyFactory
+import java.security.KeyStore
+import java.security.PrivateKey
+import java.security.cert.CertificateFactory
+import java.security.cert.X509Certificate
+import java.security.spec.PKCS8EncodedKeySpec
+import java.util.Base64
 import java.util.concurrent.locks.ReentrantLock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -97,6 +106,9 @@ class C2paPlugin : FlutterPlugin, MethodCallHandler {
             "deleteKey" -> handleDeleteKey(call, result)
             "keyExists" -> handleKeyExists(call, result)
             "exportPublicKey" -> handleExportPublicKey(call, result)
+            "importKey" -> handleImportKey(call, result)
+            "createCSR" -> handleCreateCSR(call, result)
+            "enrollHardwareKey" -> handleEnrollHardwareKey(call, result)
 
             else -> result.notImplemented()
         }
@@ -312,17 +324,36 @@ class C2paPlugin : FlutterPlugin, MethodCallHandler {
 
         val signerType = signerMap["type"] as? String ?: "pem"
 
-        // Handle async signers (remote) differently
-        if (signerType == "remote") {
-            mainScope.launch {
+        // Handle async signers (remote, callback) on background thread to avoid deadlock
+        if (signerType == "remote" || signerType == "callback") {
+            CoroutineScope(Dispatchers.IO).launch {
                 try {
                     val signer = createSignerAsync(signerMap)
-                    performSignBytes(sourceData, mimeType, manifestJson, signer, result)
+                    val builder = Builder.fromJson(manifestJson)
+                    val sourceStream = ByteArrayStream(sourceData)
+                    val destStream = ByteArrayStream()
+
+                    val signResult = builder.sign(mimeType, sourceStream, destStream, signer)
+                    val signedData = destStream.getData()
+
+                    builder.close()
                     signer.close()
+
+                    val resultMap = HashMap<String, Any?>()
+                    resultMap["signedData"] = signedData
+                    resultMap["manifestBytes"] = signResult.manifestBytes
+
+                    mainScope.launch {
+                        result.success(resultMap)
+                    }
                 } catch (e: C2PAError) {
-                    result.error("C2PA_ERROR", e.message, null)
+                    mainScope.launch {
+                        result.error("C2PA_ERROR", e.message, null)
+                    }
                 } catch (e: Exception) {
-                    result.error("ERROR", e.message, null)
+                    mainScope.launch {
+                        result.error("ERROR", e.message, null)
+                    }
                 }
             }
         } else {
@@ -392,8 +423,9 @@ class C2paPlugin : FlutterPlugin, MethodCallHandler {
                 result.error("ERROR", e.message, null)
             }
         } else {
-            // For other signer types, read file and use stream signing
-            mainScope.launch {
+            // For other signer types (callback, remote, keystore, hardware),
+            // run on IO thread to avoid deadlock with callback signers
+            CoroutineScope(Dispatchers.IO).launch {
                 try {
                     val signer = createSignerAsync(signerMap)
                     val sourceFile = File(sourcePath)
@@ -411,11 +443,18 @@ class C2paPlugin : FlutterPlugin, MethodCallHandler {
 
                     builder.close()
                     signer.close()
-                    result.success(null)
+
+                    mainScope.launch {
+                        result.success(null)
+                    }
                 } catch (e: C2PAError) {
-                    result.error("C2PA_ERROR", e.message, null)
+                    mainScope.launch {
+                        result.error("C2PA_ERROR", e.message, null)
+                    }
                 } catch (e: Exception) {
-                    result.error("ERROR", e.message, null)
+                    mainScope.launch {
+                        result.error("ERROR", e.message, null)
+                    }
                 }
             }
         }
@@ -730,16 +769,38 @@ class C2paPlugin : FlutterPlugin, MethodCallHandler {
 
         val signerType = signerMap["type"] as? String ?: "pem"
 
-        if (signerType == "remote") {
-            mainScope.launch {
+        // Callback signers need async execution to avoid deadlock:
+        // The callback uses runBlocking + mainScope.launch to call Flutter,
+        // so we must run the signing on a background thread to keep main thread free.
+        if (signerType == "remote" || signerType == "callback") {
+            CoroutineScope(Dispatchers.IO).launch {
                 try {
                     val signer = createSignerAsync(signerMap)
-                    performBuilderSign(builder, sourceData, mimeType, signer, result)
+                    val sourceStream = ByteArrayStream(sourceData)
+                    val destStream = ByteArrayStream()
+
+                    val signResult = builder.sign(mimeType, sourceStream, destStream, signer)
+                    val signedData = destStream.getData()
+
+                    val resultMap = HashMap<String, Any?>()
+                    resultMap["signedData"] = signedData
+                    resultMap["manifestBytes"] = signResult.manifestBytes
+                    resultMap["manifestSize"] = signResult.manifestBytes?.size ?: 0
+
                     signer.close()
+
+                    // Return result on main thread
+                    mainScope.launch {
+                        result.success(resultMap)
+                    }
                 } catch (e: C2PAError) {
-                    result.error("C2PA_ERROR", e.message, null)
+                    mainScope.launch {
+                        result.error("C2PA_ERROR", e.message, null)
+                    }
                 } catch (e: Exception) {
-                    result.error("ERROR", e.message, null)
+                    mainScope.launch {
+                        result.error("ERROR", e.message, null)
+                    }
                 }
             }
         } else {
@@ -795,16 +856,36 @@ class C2paPlugin : FlutterPlugin, MethodCallHandler {
 
         val signerType = signerMap["type"] as? String ?: "pem"
 
-        if (signerType == "remote") {
-            mainScope.launch {
+        // Callback signers need async execution to avoid deadlock
+        if (signerType == "remote" || signerType == "callback") {
+            CoroutineScope(Dispatchers.IO).launch {
                 try {
                     val signer = createSignerAsync(signerMap)
-                    performBuilderSignFile(builder, sourcePath, destPath, signer, result)
+                    val sourceFile = File(sourcePath)
+                    val sourceData = sourceFile.readBytes()
+                    val mimeType = getMimeTypeFromPath(sourcePath)
+
+                    val sourceStream = ByteArrayStream(sourceData)
+                    val destStream = ByteArrayStream()
+
+                    builder.sign(mimeType, sourceStream, destStream, signer)
+
+                    val destFile = File(destPath)
+                    destFile.writeBytes(destStream.getData())
+
                     signer.close()
+
+                    mainScope.launch {
+                        result.success(null)
+                    }
                 } catch (e: C2PAError) {
-                    result.error("C2PA_ERROR", e.message, null)
+                    mainScope.launch {
+                        result.error("C2PA_ERROR", e.message, null)
+                    }
                 } catch (e: Exception) {
-                    result.error("ERROR", e.message, null)
+                    mainScope.launch {
+                        result.error("ERROR", e.message, null)
+                    }
                 }
             }
         } else {
@@ -932,18 +1013,26 @@ class C2paPlugin : FlutterPlugin, MethodCallHandler {
 
         val signerType = signerMap["type"] as? String ?: "pem"
 
-        if (signerType == "remote") {
-            mainScope.launch {
+        // Callback signers need async execution to avoid deadlock
+        if (signerType == "remote" || signerType == "callback") {
+            CoroutineScope(Dispatchers.IO).launch {
                 try {
                     val signer = createSignerAsync(signerMap)
                     val assetStream = if (assetData != null) ByteArrayStream(assetData) else null
                     val embeddableData = builder.signDataHashedEmbeddable(signer, dataHash, mimeType, assetStream)
                     signer.close()
-                    result.success(embeddableData)
+
+                    mainScope.launch {
+                        result.success(embeddableData)
+                    }
                 } catch (e: C2PAError) {
-                    result.error("C2PA_ERROR", e.message, null)
+                    mainScope.launch {
+                        result.error("C2PA_ERROR", e.message, null)
+                    }
                 } catch (e: Exception) {
-                    result.error("ERROR", e.message, null)
+                    mainScope.launch {
+                        result.error("ERROR", e.message, null)
+                    }
                 }
             }
         } else {
@@ -987,17 +1076,25 @@ class C2paPlugin : FlutterPlugin, MethodCallHandler {
 
         val signerType = signerMap["type"] as? String ?: "pem"
 
-        if (signerType == "remote") {
-            mainScope.launch {
+        // Callback signers need async execution to avoid deadlock
+        if (signerType == "remote" || signerType == "callback") {
+            CoroutineScope(Dispatchers.IO).launch {
                 try {
                     val signer = createSignerAsync(signerMap)
                     val reserveSize = signer.reserveSize()
                     signer.close()
-                    result.success(reserveSize)
+
+                    mainScope.launch {
+                        result.success(reserveSize)
+                    }
                 } catch (e: C2PAError) {
-                    result.error("C2PA_ERROR", e.message, null)
+                    mainScope.launch {
+                        result.error("C2PA_ERROR", e.message, null)
+                    }
                 } catch (e: Exception) {
-                    result.error("ERROR", e.message, null)
+                    mainScope.launch {
+                        result.error("ERROR", e.message, null)
+                    }
                 }
             }
         } else {
@@ -1157,6 +1254,9 @@ class C2paPlugin : FlutterPlugin, MethodCallHandler {
         val keyAlias = map["keyAlias"] as String
         val tsaUrl = map["tsaUrl"] as String?
         val requireUserAuthentication = map["requireUserAuthentication"] as? Boolean ?: false
+
+        android.util.Log.d("C2paPlugin", "Creating hardware signer for key: $keyAlias")
+        android.util.Log.d("C2paPlugin", "Cert chain length: ${certificateChainPem.length}, starts with: ${certificateChainPem.take(50)}")
 
         val config = StrongBoxSigner.Config(
             keyTag = keyAlias,
@@ -1322,6 +1422,217 @@ class C2paPlugin : FlutterPlugin, MethodCallHandler {
             result.success(pem)
         } catch (e: Exception) {
             result.error("ERROR", "Failed to export public key: ${e.message}", null)
+        }
+    }
+
+    private fun handleImportKey(call: MethodCall, result: Result) {
+        val keyAlias = call.argument<String>("keyAlias")
+        val privateKeyPem = call.argument<String>("privateKeyPem")
+        val certificateChainPem = call.argument<String>("certificateChainPem")
+
+        if (keyAlias == null || privateKeyPem == null || certificateChainPem == null) {
+            result.error("INVALID_ARGUMENT", "keyAlias, privateKeyPem, and certificateChainPem are required", null)
+            return
+        }
+
+        try {
+            // Parse the private key from PEM
+            val privateKey = parsePemPrivateKey(privateKeyPem)
+
+            // Parse the certificate chain from PEM
+            val certChain = parsePemCertificateChain(certificateChainPem)
+
+            if (certChain.isEmpty()) {
+                result.error("INVALID_ARGUMENT", "No certificates found in certificate chain", null)
+                return
+            }
+
+            // Import into Android KeyStore
+            val keyStore = KeyStore.getInstance("AndroidKeyStore")
+            keyStore.load(null)
+
+            // Set the key entry with the certificate chain
+            keyStore.setKeyEntry(keyAlias, privateKey, null, certChain.toTypedArray())
+
+            result.success(null)
+        } catch (e: Exception) {
+            result.error("ERROR", "Failed to import key: ${e.message}", null)
+        }
+    }
+
+    private fun parsePemPrivateKey(pem: String): PrivateKey {
+        // Remove PEM headers and decode base64
+        val base64Content = pem
+            .replace("-----BEGIN PRIVATE KEY-----", "")
+            .replace("-----END PRIVATE KEY-----", "")
+            .replace("-----BEGIN EC PRIVATE KEY-----", "")
+            .replace("-----END EC PRIVATE KEY-----", "")
+            .replace("\\s".toRegex(), "")
+
+        val keyBytes = Base64.getDecoder().decode(base64Content)
+
+        // Try EC first, then RSA
+        return try {
+            val keySpec = PKCS8EncodedKeySpec(keyBytes)
+            val keyFactory = KeyFactory.getInstance("EC")
+            keyFactory.generatePrivate(keySpec)
+        } catch (e: Exception) {
+            val keySpec = PKCS8EncodedKeySpec(keyBytes)
+            val keyFactory = KeyFactory.getInstance("RSA")
+            keyFactory.generatePrivate(keySpec)
+        }
+    }
+
+    private fun parsePemCertificateChain(pem: String): List<X509Certificate> {
+        val certFactory = CertificateFactory.getInstance("X.509")
+        val certificates = mutableListOf<X509Certificate>()
+
+        // Split PEM into individual certificates
+        val certPattern = Regex("-----BEGIN CERTIFICATE-----([^-]+)-----END CERTIFICATE-----")
+        val matches = certPattern.findAll(pem)
+
+        for (match in matches) {
+            val base64Content = match.groupValues[1].replace("\\s".toRegex(), "")
+            val certBytes = Base64.getDecoder().decode(base64Content)
+            val cert = certFactory.generateCertificate(certBytes.inputStream()) as X509Certificate
+            certificates.add(cert)
+        }
+
+        return certificates
+    }
+
+    private fun handleCreateCSR(call: MethodCall, result: Result) {
+        val keyAlias = call.argument<String>("keyAlias")
+        val commonName = call.argument<String>("commonName")
+        val organization = call.argument<String>("organization")
+        val organizationalUnit = call.argument<String>("organizationalUnit")
+        val country = call.argument<String>("country")
+        val state = call.argument<String>("state")
+        val locality = call.argument<String>("locality")
+
+        if (keyAlias == null || commonName == null) {
+            result.error("INVALID_ARGUMENT", "keyAlias and commonName are required", null)
+            return
+        }
+
+        try {
+            val config = CertificateManager.CertificateConfig(
+                commonName = commonName,
+                organization = organization,
+                organizationalUnit = organizationalUnit,
+                country = country,
+                state = state,
+                locality = locality
+            )
+
+            val csr = CertificateManager.createCSR(keyAlias, config)
+            result.success(csr)
+        } catch (e: Exception) {
+            result.error("ERROR", "Failed to create CSR: ${e.message}", null)
+        }
+    }
+
+    private fun handleEnrollHardwareKey(call: MethodCall, result: Result) {
+        val keyAlias = call.argument<String>("keyAlias")
+        val signingServerUrl = call.argument<String>("signingServerUrl")
+        val bearerToken = call.argument<String>("bearerToken")
+        val commonName = call.argument<String>("commonName") ?: "C2PA Hardware Key"
+        val organization = call.argument<String>("organization") ?: "C2PA App"
+        val useStrongBox = call.argument<Boolean>("useStrongBox") ?: false
+
+        if (keyAlias == null || signingServerUrl == null) {
+            result.error("INVALID_ARGUMENT", "keyAlias and signingServerUrl are required", null)
+            return
+        }
+
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val keyStore = KeyStore.getInstance("AndroidKeyStore")
+                keyStore.load(null)
+
+                // Delete existing key to ensure fresh enrollment
+                if (keyStore.containsAlias(keyAlias)) {
+                    android.util.Log.d("C2paPlugin", "Deleting existing key: $keyAlias")
+                    keyStore.deleteEntry(keyAlias)
+                }
+
+                // Create hardware key
+                android.util.Log.d("C2paPlugin", "Creating hardware key: $keyAlias, useStrongBox: $useStrongBox")
+                if (useStrongBox) {
+                    val config = StrongBoxSigner.Config(
+                        keyTag = keyAlias,
+                        requireUserAuthentication = false
+                    )
+                    StrongBoxSigner.createKey(config)
+                } else {
+                    CertificateManager.generateHardwareKey(keyAlias, requireStrongBox = false)
+                }
+
+                // Generate CSR
+                val certConfig = CertificateManager.CertificateConfig(
+                    commonName = commonName,
+                    organization = organization,
+                    country = "US"
+                )
+                val csr = CertificateManager.createCSR(keyAlias, certConfig)
+
+                // Submit CSR to signing server
+                val enrollUrl = "$signingServerUrl/api/v1/certificates/sign"
+                val requestBody = org.json.JSONObject().apply {
+                    put("csr", csr)
+                }.toString()
+
+                val url = java.net.URL(enrollUrl)
+                val connection = url.openConnection() as java.net.HttpURLConnection
+                connection.requestMethod = "POST"
+                connection.doOutput = true
+                connection.setRequestProperty("Content-Type", "application/json")
+                connection.connectTimeout = 30000
+                connection.readTimeout = 30000
+
+                bearerToken?.let {
+                    connection.setRequestProperty("Authorization", "Bearer $it")
+                }
+
+                connection.outputStream.use { output ->
+                    output.write(requestBody.toByteArray())
+                }
+
+                if (connection.responseCode == 200) {
+                    val response = connection.inputStream.bufferedReader().use { it.readText() }
+                    connection.disconnect()
+
+                    android.util.Log.d("C2paPlugin", "Server response: $response")
+
+                    val responseJson = org.json.JSONObject(response)
+                    val certChain = responseJson.getString("certificate_chain")
+
+                    // Count certificates in chain
+                    val certCount = certChain.split("-----BEGIN CERTIFICATE-----").size - 1
+                    android.util.Log.d("C2paPlugin", "Enrollment successful, cert chain length: ${certChain.length}, cert count: $certCount")
+                    android.util.Log.d("C2paPlugin", "Cert chain starts with: ${certChain.take(200)}")
+
+                    val resultMap = HashMap<String, Any?>()
+                    resultMap["certificateChain"] = certChain
+                    resultMap["keyAlias"] = keyAlias
+
+                    mainScope.launch {
+                        result.success(resultMap)
+                    }
+                } else {
+                    val error = connection.errorStream?.bufferedReader()?.use { it.readText() }
+                        ?: "HTTP ${connection.responseCode}"
+                    connection.disconnect()
+
+                    mainScope.launch {
+                        result.error("ENROLLMENT_ERROR", "Certificate enrollment failed: $error", null)
+                    }
+                }
+            } catch (e: Exception) {
+                mainScope.launch {
+                    result.error("ERROR", "Hardware key enrollment failed: ${e.message}", null)
+                }
+            }
         }
     }
 
