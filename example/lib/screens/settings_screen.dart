@@ -149,18 +149,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _loadTestCertsForHardware() async {
-    try {
-      final cert = await rootBundle.loadString('assets/test_certs/test_es256_cert.pem');
-      setState(() {
-        _hardwareCertController.text = cert;
-      });
-      _showSnackBar('Test certificate chain loaded');
-    } catch (e) {
-      _showSnackBar('Failed to load test certificates: $e');
-    }
-  }
-
   Future<void> _enrollHardwareKey() async {
     final serverUrl = _hardwareServerUrlController.text.trim();
     if (serverUrl.isEmpty) {
