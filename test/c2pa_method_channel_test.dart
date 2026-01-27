@@ -14,8 +14,8 @@ void main() {
   setUp(() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (MethodCall methodCall) async {
-      return '42';
-    });
+          return '42';
+        });
   });
 
   tearDown(() {
@@ -37,39 +37,42 @@ void main() {
 
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, (MethodCall methodCall) async {
-        methodCalls.add(methodCall);
+            methodCalls.add(methodCall);
 
-        switch (methodCall.method) {
-          case 'createBuilder':
-            return nextHandle++;
-          case 'builderDispose':
-            return null;
-          case 'builderSetIntent':
-            return null;
-          case 'builderSetNoEmbed':
-            return null;
-          case 'builderSetRemoteUrl':
-            return null;
-          case 'builderAddAction':
-            return null;
-          case 'builderSign':
-            return {
-              'signedData': Uint8List.fromList([1, 2, 3]),
-              'manifestBytes': Uint8List.fromList([4, 5, 6]),
-              'manifestSize': 3,
-            };
-          case 'builderToArchive':
-            return Uint8List.fromList([7, 8, 9]);
-          default:
-            return null;
-        }
-      });
+            switch (methodCall.method) {
+              case 'createBuilder':
+                return nextHandle++;
+              case 'builderDispose':
+                return null;
+              case 'builderSetIntent':
+                return null;
+              case 'builderSetNoEmbed':
+                return null;
+              case 'builderSetRemoteUrl':
+                return null;
+              case 'builderAddAction':
+                return null;
+              case 'builderSign':
+                return {
+                  'signedData': Uint8List.fromList([1, 2, 3]),
+                  'manifestBytes': Uint8List.fromList([4, 5, 6]),
+                  'manifestSize': 3,
+                };
+              case 'builderToArchive':
+                return Uint8List.fromList([7, 8, 9]);
+              default:
+                return null;
+            }
+          });
     });
 
     test('setIntent is applied via native call on sign', () async {
       final builder = await platform.createBuilder('{}');
 
-      builder.setIntent(ManifestIntent.create, DigitalSourceType.digitalCapture);
+      builder.setIntent(
+        ManifestIntent.create,
+        DigitalSourceType.digitalCapture,
+      );
 
       await builder.sign(
         sourceData: Uint8List.fromList([1, 2, 3]),
@@ -81,12 +84,15 @@ void main() {
         ),
       );
 
-      final setIntentCalls =
-          methodCalls.where((c) => c.method == 'builderSetIntent').toList();
+      final setIntentCalls = methodCalls
+          .where((c) => c.method == 'builderSetIntent')
+          .toList();
       expect(setIntentCalls.length, 1);
       expect(setIntentCalls[0].arguments['intent'], 'create');
       expect(
-          setIntentCalls[0].arguments['digitalSourceType'], 'digitalCapture');
+        setIntentCalls[0].arguments['digitalSourceType'],
+        'digitalCapture',
+      );
 
       builder.dispose();
     });
@@ -94,10 +100,9 @@ void main() {
     test('addAction is applied via native call on sign', () async {
       final builder = await platform.createBuilder('{}');
 
-      builder.addAction(ActionConfig(
-        action: 'c2pa.created',
-        softwareAgent: 'TestApp/1.0',
-      ));
+      builder.addAction(
+        ActionConfig(action: 'c2pa.created', softwareAgent: 'TestApp/1.0'),
+      );
 
       await builder.sign(
         sourceData: Uint8List.fromList([1, 2, 3]),
@@ -109,12 +114,14 @@ void main() {
         ),
       );
 
-      final addActionCalls =
-          methodCalls.where((c) => c.method == 'builderAddAction').toList();
+      final addActionCalls = methodCalls
+          .where((c) => c.method == 'builderAddAction')
+          .toList();
       expect(addActionCalls.length, 1);
 
-      final actionJson =
-          jsonDecode(addActionCalls[0].arguments['actionJson'] as String);
+      final actionJson = jsonDecode(
+        addActionCalls[0].arguments['actionJson'] as String,
+      );
       expect(actionJson['action'], 'c2pa.created');
       expect(actionJson['softwareAgent'], 'TestApp/1.0');
 
@@ -136,8 +143,9 @@ void main() {
         ),
       );
 
-      final setNoEmbedCalls =
-          methodCalls.where((c) => c.method == 'builderSetNoEmbed').toList();
+      final setNoEmbedCalls = methodCalls
+          .where((c) => c.method == 'builderSetNoEmbed')
+          .toList();
       expect(setNoEmbedCalls.length, 1);
 
       builder.dispose();
@@ -158,10 +166,14 @@ void main() {
         ),
       );
 
-      final setRemoteUrlCalls =
-          methodCalls.where((c) => c.method == 'builderSetRemoteUrl').toList();
+      final setRemoteUrlCalls = methodCalls
+          .where((c) => c.method == 'builderSetRemoteUrl')
+          .toList();
       expect(setRemoteUrlCalls.length, 1);
-      expect(setRemoteUrlCalls[0].arguments['url'], 'https://example.com/manifest');
+      expect(
+        setRemoteUrlCalls[0].arguments['url'],
+        'https://example.com/manifest',
+      );
 
       builder.dispose();
     });
@@ -198,8 +210,9 @@ void main() {
 
       await builder.toArchive();
 
-      final setIntentCalls =
-          methodCalls.where((c) => c.method == 'builderSetIntent').toList();
+      final setIntentCalls = methodCalls
+          .where((c) => c.method == 'builderSetIntent')
+          .toList();
       expect(setIntentCalls.length, 1);
       expect(setIntentCalls[0].arguments['intent'], 'edit');
 
@@ -213,7 +226,10 @@ void main() {
       expect(() => builder.setIntent(ManifestIntent.create), throwsStateError);
       expect(() => builder.setNoEmbed(), throwsStateError);
       expect(() => builder.setRemoteUrl('url'), throwsStateError);
-      expect(() => builder.addAction(ActionConfig(action: 'test')), throwsStateError);
+      expect(
+        () => builder.addAction(ActionConfig(action: 'test')),
+        throwsStateError,
+      );
     });
 
     test('dispose calls native builderDispose', () async {
@@ -222,8 +238,9 @@ void main() {
 
       builder.dispose();
 
-      final disposeCalls =
-          methodCalls.where((c) => c.method == 'builderDispose').toList();
+      final disposeCalls = methodCalls
+          .where((c) => c.method == 'builderDispose')
+          .toList();
       expect(disposeCalls.length, 1);
       expect(disposeCalls[0].arguments['handle'], handle);
     });
@@ -234,8 +251,9 @@ void main() {
       builder.dispose();
       builder.dispose(); // Should be no-op
 
-      final disposeCalls =
-          methodCalls.where((c) => c.method == 'builderDispose').toList();
+      final disposeCalls = methodCalls
+          .where((c) => c.method == 'builderDispose')
+          .toList();
       expect(disposeCalls.length, 1);
     });
 
@@ -270,8 +288,9 @@ void main() {
       );
 
       // Should not have setIntent call in second sign
-      final setIntentCalls =
-          methodCalls.where((c) => c.method == 'builderSetIntent').toList();
+      final setIntentCalls = methodCalls
+          .where((c) => c.method == 'builderSetIntent')
+          .toList();
       expect(setIntentCalls.length, 0);
 
       builder.dispose();

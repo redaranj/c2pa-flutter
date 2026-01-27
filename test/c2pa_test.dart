@@ -254,10 +254,7 @@ void main() {
     test('createBuilder with ManifestDefinition.created', () async {
       final manifest = ManifestDefinition.created(
         title: 'Digital Photo',
-        claimGenerator: ClaimGeneratorInfo(
-          name: 'TestApp',
-          version: '1.0.0',
-        ),
+        claimGenerator: ClaimGeneratorInfo(name: 'TestApp', version: '1.0.0'),
         sourceType: DigitalSourceType.digitalCapture,
       );
 
@@ -318,7 +315,10 @@ void main() {
       final call = mockPlatform.methodCalls.last;
       expect(call.arguments!['manifestJson'], contains('AI Generated Image'));
       expect(call.arguments!['manifestJson'], contains('c2pa.ai_generated'));
-      expect(call.arguments!['manifestJson'], contains('trainedAlgorithmicMedia'));
+      expect(
+        call.arguments!['manifestJson'],
+        contains('trainedAlgorithmicMedia'),
+      );
       expect(call.arguments!['manifestJson'], contains('c2pa.training-mining'));
     });
 
@@ -355,9 +355,7 @@ void main() {
             copyrightNotice: '2024 Test Author',
           ),
         ],
-        ingredients: [
-          Ingredient.parent(title: 'Original Photo'),
-        ],
+        ingredients: [Ingredient.parent(title: 'Original Photo')],
         vendor: 'test-vendor',
         format: 'image/jpeg',
       );
@@ -366,7 +364,10 @@ void main() {
       expect(builder, isNotNull);
 
       final call = mockPlatform.methodCalls.last;
-      expect(call.arguments!['manifestJson'], contains('Complete Manifest Test'));
+      expect(
+        call.arguments!['manifestJson'],
+        contains('Complete Manifest Test'),
+      );
       expect(call.arguments!['manifestJson'], contains('Test Author'));
       expect(call.arguments!['manifestJson'], contains('Original Photo'));
     });

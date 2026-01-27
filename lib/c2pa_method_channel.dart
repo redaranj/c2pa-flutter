@@ -562,28 +562,25 @@ class MethodChannelC2pa extends C2paPlatform {
 
   @override
   Future<bool> deleteKey(String keyAlias) async {
-    final result = await methodChannel.invokeMethod<bool>(
-      'deleteKey',
-      {'keyAlias': keyAlias},
-    );
+    final result = await methodChannel.invokeMethod<bool>('deleteKey', {
+      'keyAlias': keyAlias,
+    });
     return result ?? false;
   }
 
   @override
   Future<bool> keyExists(String keyAlias) async {
-    final result = await methodChannel.invokeMethod<bool>(
-      'keyExists',
-      {'keyAlias': keyAlias},
-    );
+    final result = await methodChannel.invokeMethod<bool>('keyExists', {
+      'keyAlias': keyAlias,
+    });
     return result ?? false;
   }
 
   @override
   Future<String> exportPublicKey(String keyAlias) async {
-    final result = await methodChannel.invokeMethod<String>(
-      'exportPublicKey',
-      {'keyAlias': keyAlias},
-    );
+    final result = await methodChannel.invokeMethod<String>('exportPublicKey', {
+      'keyAlias': keyAlias,
+    });
 
     if (result == null) {
       throw PlatformException(
@@ -629,10 +626,7 @@ class MethodChannelC2pa extends C2paPlatform {
     });
 
     if (result == null) {
-      throw PlatformException(
-        code: 'ERROR',
-        message: 'Failed to create CSR',
-      );
+      throw PlatformException(code: 'ERROR', message: 'Failed to create CSR');
     }
 
     return result;
@@ -647,14 +641,15 @@ class MethodChannelC2pa extends C2paPlatform {
     String? organization,
     bool useStrongBox = false,
   }) async {
-    final result = await methodChannel.invokeMethod<Map<dynamic, dynamic>>('enrollHardwareKey', {
-      'keyAlias': keyAlias,
-      'signingServerUrl': signingServerUrl,
-      'bearerToken': bearerToken,
-      'commonName': commonName,
-      'organization': organization,
-      'useStrongBox': useStrongBox,
-    });
+    final result = await methodChannel
+        .invokeMethod<Map<dynamic, dynamic>>('enrollHardwareKey', {
+          'keyAlias': keyAlias,
+          'signingServerUrl': signingServerUrl,
+          'bearerToken': bearerToken,
+          'commonName': commonName,
+          'organization': organization,
+          'useStrongBox': useStrongBox,
+        });
 
     if (result == null) {
       throw PlatformException(

@@ -98,10 +98,7 @@ void main() {
     });
 
     test('circle factory creates correct shape', () {
-      final shape = Shape.circle(
-        origin: Coordinate(x: 50, y: 50),
-        radius: 25,
-      );
+      final shape = Shape.circle(origin: Coordinate(x: 50, y: 50), radius: 25);
 
       expect(shape.type, ShapeType.circle);
       expect(shape.radius, 25);
@@ -172,16 +169,18 @@ void main() {
 
     test('RegionRange.fromJson detects type correctly', () {
       final spatial = RegionRange.fromJson({
-        'shape': {'type': 'rectangle', 'width': 100, 'height': 100}
+        'shape': {'type': 'rectangle', 'width': 100, 'height': 100},
       });
       expect(spatial, isA<SpatialRange>());
 
       final temporal = RegionRange.fromJson({
-        'time': {'start': '0:00', 'end': '1:00'}
+        'time': {'start': '0:00', 'end': '1:00'},
       });
       expect(temporal, isA<TemporalRange>());
 
-      final frame = RegionRange.fromJson({'frame': {'start': 0, 'end': 100}});
+      final frame = RegionRange.fromJson({
+        'frame': {'start': 0, 'end': 100},
+      });
       expect(frame, isA<FrameRange>());
     });
   });
@@ -385,9 +384,7 @@ void main() {
   group('Assertions', () {
     test('ActionsAssertion serializes correctly', () {
       final assertion = ActionsAssertion(
-        actions: [
-          Action.created(sourceType: DigitalSourceType.digitalCapture),
-        ],
+        actions: [Action.created(sourceType: DigitalSourceType.digitalCapture)],
       );
 
       final json = assertion.toJson();
@@ -436,9 +433,9 @@ void main() {
         'label': 'c2pa.actions',
         'data': {
           'actions': [
-            {'action': 'c2pa.created'}
-          ]
-        }
+            {'action': 'c2pa.created'},
+          ],
+        },
       };
 
       final assertion = AssertionDefinition.fromJson(json);
@@ -509,9 +506,7 @@ void main() {
           ),
           CreativeWorkAssertion(author: 'Test Author'),
         ],
-        ingredients: [
-          Ingredient.parent(title: 'Parent Image'),
-        ],
+        ingredients: [Ingredient.parent(title: 'Parent Image')],
         vendor: 'test-vendor',
         format: 'image/jpeg',
       );
@@ -530,9 +525,7 @@ void main() {
     test('toJson includes claim_generator for compatibility', () {
       final manifest = ManifestDefinition(
         title: 'Test',
-        claimGeneratorInfo: [
-          ClaimGeneratorInfo(name: 'App', version: '1.0'),
-        ],
+        claimGeneratorInfo: [ClaimGeneratorInfo(name: 'App', version: '1.0')],
       );
 
       final json = manifest.toJson();

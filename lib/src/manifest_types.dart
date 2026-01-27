@@ -153,11 +153,13 @@ enum ImageRegionType {
   headline('http://cv.iptc.org/newscodes/imageregionrole/headline'),
   mainSubject('http://cv.iptc.org/newscodes/imageregionrole/mainSubject'),
   landscapeScenery(
-      'http://cv.iptc.org/newscodes/imageregionrole/landscapeScenery'),
+    'http://cv.iptc.org/newscodes/imageregionrole/landscapeScenery',
+  ),
   logo('http://cv.iptc.org/newscodes/imageregionrole/logo'),
   mark('http://cv.iptc.org/newscodes/imageregionrole/mark'),
   organisationInImage(
-      'http://cv.iptc.org/newscodes/imageregionrole/organisationInImage'),
+    'http://cv.iptc.org/newscodes/imageregionrole/organisationInImage',
+  ),
   personInImage('http://cv.iptc.org/newscodes/imageregionrole/personInImage'),
   photoCaption('http://cv.iptc.org/newscodes/imageregionrole/photoCaption'),
   product('http://cv.iptc.org/newscodes/imageregionrole/product'),
@@ -189,35 +191,47 @@ enum StandardAssertionLabel {
 enum DigitalSourceType {
   empty('http://c2pa.org/digitalsourcetype/empty'),
   trainedAlgorithmicData(
-      'http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicData'),
+    'http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicData',
+  ),
   digitalCapture(
-      'http://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture'),
+    'http://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture',
+  ),
   computationalCapture(
-      'http://cv.iptc.org/newscodes/digitalsourcetype/computationalCapture'),
+    'http://cv.iptc.org/newscodes/digitalsourcetype/computationalCapture',
+  ),
   negativeFilm('http://cv.iptc.org/newscodes/digitalsourcetype/negativeFilm'),
   positiveFilm('http://cv.iptc.org/newscodes/digitalsourcetype/positiveFilm'),
   print('http://cv.iptc.org/newscodes/digitalsourcetype/print'),
   humanEdits('http://cv.iptc.org/newscodes/digitalsourcetype/humanEdits'),
   compositeWithTrainedAlgorithmicMedia(
-      'http://cv.iptc.org/newscodes/digitalsourcetype/compositeWithTrainedAlgorithmicMedia'),
+    'http://cv.iptc.org/newscodes/digitalsourcetype/compositeWithTrainedAlgorithmicMedia',
+  ),
   algorithmicallyEnhanced(
-      'http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicallyEnhanced'),
+    'http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicallyEnhanced',
+  ),
   digitalCreation(
-      'http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation'),
+    'http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation',
+  ),
   dataDrivenMedia(
-      'http://cv.iptc.org/newscodes/digitalsourcetype/dataDrivenMedia'),
+    'http://cv.iptc.org/newscodes/digitalsourcetype/dataDrivenMedia',
+  ),
   trainedAlgorithmicMedia(
-      'http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia'),
+    'http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia',
+  ),
   algorithmicMedia(
-      'http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia'),
+    'http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia',
+  ),
   screenCapture('http://cv.iptc.org/newscodes/digitalsourcetype/screenCapture'),
   virtualRecording(
-      'http://cv.iptc.org/newscodes/digitalsourcetype/virtualRecording'),
+    'http://cv.iptc.org/newscodes/digitalsourcetype/virtualRecording',
+  ),
   composite('http://cv.iptc.org/newscodes/digitalsourcetype/composite'),
   compositeCapture(
-      'http://cv.iptc.org/newscodes/digitalsourcetype/compositeCapture'),
+    'http://cv.iptc.org/newscodes/digitalsourcetype/compositeCapture',
+  ),
   compositeSynthetic(
-      'http://cv.iptc.org/newscodes/digitalsourcetype/compositeSynthetic');
+    'http://cv.iptc.org/newscodes/digitalsourcetype/compositeSynthetic',
+  );
 
   const DigitalSourceType(this.url);
   final String url;
@@ -397,10 +411,7 @@ class Frame {
   }
 
   factory Frame.fromJson(Map<String, dynamic> json) {
-    return Frame(
-      start: json['start'] as int,
-      end: json['end'] as int?,
-    );
+    return Frame(start: json['start'] as int, end: json['end'] as int?);
   }
 }
 
@@ -782,26 +793,35 @@ class ValidationResults {
   });
 
   Map<String, dynamic> toJson() => {
-        'errors': errors.map((e) => e.toJson()).toList(),
-        'warnings': warnings.map((w) => w.toJson()).toList(),
-        'informational': informational.map((i) => i.toJson()).toList(),
-      };
+    'errors': errors.map((e) => e.toJson()).toList(),
+    'warnings': warnings.map((w) => w.toJson()).toList(),
+    'informational': informational.map((i) => i.toJson()).toList(),
+  };
 
   factory ValidationResults.fromJson(Map<String, dynamic> json) {
     return ValidationResults(
-      errors: (json['errors'] as List<dynamic>?)
+      errors:
+          (json['errors'] as List<dynamic>?)
               ?.map(
-                  (e) => ValidationStatusEntry.fromJson(e as Map<String, dynamic>))
+                (e) =>
+                    ValidationStatusEntry.fromJson(e as Map<String, dynamic>),
+              )
               .toList() ??
           [],
-      warnings: (json['warnings'] as List<dynamic>?)
+      warnings:
+          (json['warnings'] as List<dynamic>?)
               ?.map(
-                  (w) => ValidationStatusEntry.fromJson(w as Map<String, dynamic>))
+                (w) =>
+                    ValidationStatusEntry.fromJson(w as Map<String, dynamic>),
+              )
               .toList() ??
           [],
-      informational: (json['informational'] as List<dynamic>?)
+      informational:
+          (json['informational'] as List<dynamic>?)
               ?.map(
-                  (i) => ValidationStatusEntry.fromJson(i as Map<String, dynamic>))
+                (i) =>
+                    ValidationStatusEntry.fromJson(i as Map<String, dynamic>),
+              )
               .toList() ??
           [],
     );
@@ -1058,14 +1078,16 @@ class Action {
       action: json['action'] as String,
       digitalSourceType: json['digitalSourceType'] as String?,
       softwareAgent: json['softwareAgent'] as String?,
-      parameters: (json['parameters'] as Map<String, dynamic>?)
-          ?.map((k, v) => MapEntry(k, v as String)),
+      parameters: (json['parameters'] as Map<String, dynamic>?)?.map(
+        (k, v) => MapEntry(k, v as String),
+      ),
       when: json['when'] as String?,
       changes: (json['changes'] as List<dynamic>?)
           ?.map((c) => RegionOfInterest.fromJson(c as Map<String, dynamic>))
           .toList(),
-      related:
-          (json['related'] as List<dynamic>?)?.map((r) => r as String).toList(),
+      related: (json['related'] as List<dynamic>?)
+          ?.map((r) => r as String)
+          .toList(),
       reason: json['reason'] as String?,
     );
   }
@@ -1151,8 +1173,9 @@ class Ingredient {
       map['data_types'] = dataTypes!.map((t) => t.toJson()).toList();
     }
     if (validationStatus != null) {
-      map['validation_status'] =
-          validationStatus!.map((s) => s.toJson()).toList();
+      map['validation_status'] = validationStatus!
+          .map((s) => s.toJson())
+          .toList();
     }
     if (validationResults != null) {
       map['validation_results'] = validationResults!.toJson();
@@ -1190,11 +1213,13 @@ class Ingredient {
           .toList(),
       validationStatus: (json['validation_status'] as List<dynamic>?)
           ?.map(
-              (s) => ValidationStatusEntry.fromJson(s as Map<String, dynamic>))
+            (s) => ValidationStatusEntry.fromJson(s as Map<String, dynamic>),
+          )
           .toList(),
       validationResults: json['validation_results'] != null
           ? ValidationResults.fromJson(
-              json['validation_results'] as Map<String, dynamic>)
+              json['validation_results'] as Map<String, dynamic>,
+            )
           : null,
       metadata: json['metadata'] != null
           ? Metadata.fromJson(json['metadata'] as Map<String, dynamic>)
@@ -1217,15 +1242,10 @@ class ClaimGeneratorInfo {
   final String? version;
   final Map<String, String>? icon;
 
-  const ClaimGeneratorInfo({
-    required this.name,
-    this.version,
-    this.icon,
-  });
+  const ClaimGeneratorInfo({required this.name, this.version, this.icon});
 
   /// Format as claim generator string (name/version or just name)
-  String get claimGeneratorString =>
-      version != null ? '$name/$version' : name;
+  String get claimGeneratorString => version != null ? '$name/$version' : name;
 
   Map<String, dynamic> toJson() {
     final map = <String, dynamic>{'name': name};
@@ -1238,8 +1258,9 @@ class ClaimGeneratorInfo {
     return ClaimGeneratorInfo(
       name: json['name'] as String,
       version: json['version'] as String?,
-      icon: (json['icon'] as Map<String, dynamic>?)
-          ?.map((k, v) => MapEntry(k, v as String)),
+      icon: (json['icon'] as Map<String, dynamic>?)?.map(
+        (k, v) => MapEntry(k, v as String),
+      ),
     );
   }
 }
@@ -1309,10 +1330,7 @@ class TrainingMiningEntry {
   }
 
   Map<String, dynamic> toJson() {
-    final map = <String, dynamic>{
-      'use': use,
-      permission.value: true,
-    };
+    final map = <String, dynamic>{'use': use, permission.value: true};
     if (constraintInfo != null) map['constraint_info'] = constraintInfo;
     return map;
   }
@@ -1443,7 +1461,7 @@ class CreativeWorkAssertion extends AssertionDefinition {
       'author',
       'copyrightNotice',
       'creator',
-      'license'
+      'license',
     };
     final additional = Map<String, dynamic>.from(data)
       ..removeWhere((k, _) => knownKeys.contains(k));
@@ -1605,7 +1623,8 @@ class ManifestDefinition {
     List<Action>? actions,
     List<AssertionDefinition>? additionalAssertions,
   }) {
-    final editActions = actions ??
+    final editActions =
+        actions ??
         [
           Action.edited(
             softwareAgent: claimGenerator.claimGeneratorString,
@@ -1658,7 +1677,9 @@ class ManifestDefinition {
   Map<String, dynamic> toJson() {
     final map = <String, dynamic>{
       'title': title,
-      'claim_generator_info': claimGeneratorInfo.map((c) => c.toJson()).toList(),
+      'claim_generator_info': claimGeneratorInfo
+          .map((c) => c.toJson())
+          .toList(),
     };
 
     // Add claim_generator string for compatibility
@@ -1692,17 +1713,22 @@ class ManifestDefinition {
   factory ManifestDefinition.fromMap(Map<String, dynamic> map) {
     return ManifestDefinition(
       title: map['title'] as String,
-      claimGeneratorInfo: (map['claim_generator_info'] as List<dynamic>?)
-              ?.map((c) =>
-                  ClaimGeneratorInfo.fromJson(c as Map<String, dynamic>))
+      claimGeneratorInfo:
+          (map['claim_generator_info'] as List<dynamic>?)
+              ?.map(
+                (c) => ClaimGeneratorInfo.fromJson(c as Map<String, dynamic>),
+              )
               .toList() ??
           [],
-      assertions: (map['assertions'] as List<dynamic>?)
-              ?.map((a) =>
-                  AssertionDefinition.fromJson(a as Map<String, dynamic>))
+      assertions:
+          (map['assertions'] as List<dynamic>?)
+              ?.map(
+                (a) => AssertionDefinition.fromJson(a as Map<String, dynamic>),
+              )
               .toList() ??
           [],
-      ingredients: (map['ingredients'] as List<dynamic>?)
+      ingredients:
+          (map['ingredients'] as List<dynamic>?)
               ?.map((i) => Ingredient.fromJson(i as Map<String, dynamic>))
               .toList() ??
           [],
@@ -1713,8 +1739,9 @@ class ManifestDefinition {
       vendor: map['vendor'] as String?,
       label: map['label'] as String?,
       instanceId: map['instance_id'] as String?,
-      redactions:
-          (map['redactions'] as List<dynamic>?)?.cast<String>().toList(),
+      redactions: (map['redactions'] as List<dynamic>?)
+          ?.cast<String>()
+          .toList(),
       claimVersion: map['claim_version'] as int? ?? 1,
     );
   }
