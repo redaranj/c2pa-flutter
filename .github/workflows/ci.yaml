@@ -33,11 +33,10 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Enable Swift Package Manager
-        run: flutter config --enable-swift-package-manager
-
       - name: Install dependencies
-        run: flutter pub get
+        run: |
+          flutter config --enable-swift-package-manager
+          flutter pub get
 
       - name: Check formatting
         run: dart format --set-exit-if-changed lib/ test/
@@ -63,11 +62,10 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Enable Swift Package Manager
-        run: flutter config --enable-swift-package-manager
-
       - name: Install dependencies
-        run: flutter pub get
+        run: |
+          flutter config --enable-swift-package-manager
+          flutter pub get
 
       - name: Run unit tests
         run: flutter test --coverage --reporter expanded
@@ -105,11 +103,9 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Enable Swift Package Manager
-        run: flutter config --enable-swift-package-manager
-
       - name: Install dependencies
         run: |
+          flutter config --enable-swift-package-manager
           flutter pub get
           cd example && flutter pub get
 
@@ -149,11 +145,9 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Enable Swift Package Manager
-        run: flutter config --enable-swift-package-manager
-
       - name: Install dependencies
         run: |
+          flutter config --enable-swift-package-manager
           flutter pub get
           cd example && flutter pub get
 
@@ -184,11 +178,9 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Enable Swift Package Manager
-        run: flutter config --enable-swift-package-manager
-
       - name: Install dependencies
         run: |
+          flutter config --enable-swift-package-manager
           flutter pub get
           cd example && flutter pub get
 
@@ -237,11 +229,9 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Enable Swift Package Manager
-        run: flutter config --enable-swift-package-manager
-
       - name: Install dependencies
         run: |
+          flutter config --enable-swift-package-manager
           flutter pub get
           cd example && flutter pub get
 
@@ -336,11 +326,10 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Enable Swift Package Manager
-        run: flutter config --enable-swift-package-manager
-
       - name: Install dependencies
-        run: flutter pub get
+        run: |
+          flutter config --enable-swift-package-manager
+          flutter pub get
 
       - name: Check publish readiness
         run: flutter pub publish --dry-run
