@@ -22,6 +22,10 @@ public class C2paPlugin: NSObject, FlutterPlugin {
             result("iOS " + UIDevice.current.systemVersion)
         case "getVersion":
             handleGetVersion(result: result)
+        case "getSupportedReadMimeTypes":
+            handleGetSupportedReadMimeTypes(result: result)
+        case "getSupportedSignMimeTypes":
+            handleGetSupportedSignMimeTypes(result: result)
         case "readFile":
             handleReadFile(call: call, result: result)
         case "readBytes":
@@ -87,6 +91,48 @@ public class C2paPlugin: NSObject, FlutterPlugin {
 
     private func handleGetVersion(result: @escaping FlutterResult) {
         result(c2paVersion)
+    }
+
+    private func handleGetSupportedReadMimeTypes(result: @escaping FlutterResult) {
+        let mimeTypes = [
+            "image/jpeg",
+            "image/png",
+            "image/webp",
+            "image/gif",
+            "image/tiff",
+            "image/heic",
+            "image/heif",
+            "image/avif",
+            "video/mp4",
+            "video/quicktime",
+            "audio/mp4",
+            "application/mp4",
+            "audio/mpeg",
+            "application/pdf",
+            "image/svg+xml"
+        ]
+        result(mimeTypes)
+    }
+
+    private func handleGetSupportedSignMimeTypes(result: @escaping FlutterResult) {
+        let mimeTypes = [
+            "image/jpeg",
+            "image/png",
+            "image/webp",
+            "image/gif",
+            "image/tiff",
+            "image/heic",
+            "image/heif",
+            "image/avif",
+            "video/mp4",
+            "video/quicktime",
+            "audio/mp4",
+            "application/mp4",
+            "audio/mpeg",
+            "application/pdf",
+            "image/svg+xml"
+        ]
+        result(mimeTypes)
     }
 
     // MARK: - Reader API
