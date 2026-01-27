@@ -177,13 +177,14 @@ class MockC2paPlatform extends C2paPlatform with MockPlatformInterfaceMixin {
     required Uint8List sourceData,
     required String mimeType,
     required String manifestJson,
-    required SignerInfo signerInfo,
+    required C2paSigner signer,
   }) async {
     _recordCall('signBytes', {
       'sourceDataLength': sourceData.length,
       'mimeType': mimeType,
       'manifestJson': manifestJson,
-      'algorithm': signerInfo.algorithm.name,
+      'algorithm': signer.algorithm.name,
+      'signerType': signer.runtimeType.toString(),
     });
     _checkError();
 
@@ -199,13 +200,14 @@ class MockC2paPlatform extends C2paPlatform with MockPlatformInterfaceMixin {
     required String sourcePath,
     required String destPath,
     required String manifestJson,
-    required SignerInfo signerInfo,
+    required C2paSigner signer,
   }) async {
     _recordCall('signFile', {
       'sourcePath': sourcePath,
       'destPath': destPath,
       'manifestJson': manifestJson,
-      'algorithm': signerInfo.algorithm.name,
+      'algorithm': signer.algorithm.name,
+      'signerType': signer.runtimeType.toString(),
     });
     _checkError();
   }
@@ -327,13 +329,14 @@ class MockC2paPlatform extends C2paPlatform with MockPlatformInterfaceMixin {
     int handle,
     Uint8List sourceData,
     String mimeType,
-    SignerInfo signerInfo,
+    C2paSigner signer,
   ) async {
     _recordCall('builderSign', {
       'handle': handle,
       'sourceDataLength': sourceData.length,
       'mimeType': mimeType,
-      'algorithm': signerInfo.algorithm.name,
+      'algorithm': signer.algorithm.name,
+      'signerType': signer.runtimeType.toString(),
     });
     _checkError();
 
@@ -351,13 +354,14 @@ class MockC2paPlatform extends C2paPlatform with MockPlatformInterfaceMixin {
     int handle,
     String sourcePath,
     String destPath,
-    SignerInfo signerInfo,
+    C2paSigner signer,
   ) async {
     _recordCall('builderSignFile', {
       'handle': handle,
       'sourcePath': sourcePath,
       'destPath': destPath,
-      'algorithm': signerInfo.algorithm.name,
+      'algorithm': signer.algorithm.name,
+      'signerType': signer.runtimeType.toString(),
     });
     _checkError();
   }
@@ -390,14 +394,15 @@ class MockC2paPlatform extends C2paPlatform with MockPlatformInterfaceMixin {
   @override
   Future<Uint8List> signHashedEmbeddable({
     required int builderHandle,
-    required SignerInfo signerInfo,
+    required C2paSigner signer,
     required String dataHash,
     required String mimeType,
     Uint8List? assetData,
   }) async {
     _recordCall('signHashedEmbeddable', {
       'handle': builderHandle,
-      'algorithm': signerInfo.algorithm.name,
+      'algorithm': signer.algorithm.name,
+      'signerType': signer.runtimeType.toString(),
       'dataHash': dataHash,
       'mimeType': mimeType,
       'assetDataLength': assetData?.length,
@@ -420,12 +425,59 @@ class MockC2paPlatform extends C2paPlatform with MockPlatformInterfaceMixin {
   }
 
   @override
-  Future<int> getSignerReserveSize(SignerInfo signerInfo) async {
+  Future<int> getSignerReserveSize(C2paSigner signer) async {
     _recordCall('getSignerReserveSize', {
-      'algorithm': signerInfo.algorithm.name,
+      'algorithm': signer.algorithm.name,
+      'signerType': signer.runtimeType.toString(),
     });
     _checkError();
     return mockReserveSize;
+  }
+
+  // ===========================================================================
+  // Key Management API
+  // ===========================================================================
+
+  @override
+  Future<bool> isHardwareSigningAvailable() async {
+    _recordCall('isHardwareSigningAvailable', null);
+    _checkError();
+    return false; // Mock returns false for hardware availability
+  }
+
+  @override
+  Future<void> createKey({
+    required String keyAlias,
+    required SigningAlgorithm algorithm,
+    required bool useHardware,
+  }) async {
+    _recordCall('createKey', {
+      'keyAlias': keyAlias,
+      'algorithm': algorithm.name,
+      'useHardware': useHardware,
+    });
+    _checkError();
+  }
+
+  @override
+  Future<bool> deleteKey(String keyAlias) async {
+    _recordCall('deleteKey', {'keyAlias': keyAlias});
+    _checkError();
+    return true;
+  }
+
+  @override
+  Future<bool> keyExists(String keyAlias) async {
+    _recordCall('keyExists', {'keyAlias': keyAlias});
+    _checkError();
+    return false;
+  }
+
+  @override
+  Future<String> exportPublicKey(String keyAlias) async {
+    _recordCall('exportPublicKey', {'keyAlias': keyAlias});
+    _checkError();
+    return '-----BEGIN PUBLIC KEY-----\nMockPublicKey\n-----END PUBLIC KEY-----';
   }
 
   // ===========================================================================
@@ -571,10 +623,10 @@ class MockBuilder implements ManifestBuilder {
   Future<BuilderSignResult> sign({
     required Uint8List sourceData,
     required String mimeType,
-    required SignerInfo signerInfo,
+    required C2paSigner signer,
   }) async {
     _checkDisposed();
-    return _platform.builderSign(_handle, sourceData, mimeType, signerInfo);
+    return _platform.builderSign(_handle, sourceData, mimeType, signer);
   }
 
   @override

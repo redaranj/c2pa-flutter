@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
@@ -8,6 +10,54 @@ import 'c2pa_platform_interface.dart';
 class MethodChannelC2pa extends C2paPlatform {
   @visibleForTesting
   final methodChannel = const MethodChannel('org.guardianproject.c2pa');
+
+  // Callback management for CallbackSigner
+  final Map<String, Future<Uint8List> Function(Uint8List)> _signCallbacks = {};
+  int _nextCallbackId = 0;
+  bool _callbackHandlerRegistered = false;
+
+  void _ensureCallbackHandlerRegistered() {
+    if (_callbackHandlerRegistered) return;
+    _callbackHandlerRegistered = true;
+    methodChannel.setMethodCallHandler(_handleMethodCall);
+  }
+
+  Future<dynamic> _handleMethodCall(MethodCall call) async {
+    switch (call.method) {
+      case 'signCallback':
+        final callbackId = call.arguments['callbackId'] as String;
+        final data = call.arguments['data'] as Uint8List;
+        final callback = _signCallbacks[callbackId];
+        if (callback == null) {
+          throw PlatformException(
+            code: 'CALLBACK_NOT_FOUND',
+            message: 'Callback $callbackId not found',
+          );
+        }
+        return await callback(data);
+      default:
+        throw UnimplementedError('Method ${call.method} not implemented');
+    }
+  }
+
+  String _registerCallback(Future<Uint8List> Function(Uint8List) callback) {
+    _ensureCallbackHandlerRegistered();
+    final id = 'callback_${_nextCallbackId++}';
+    _signCallbacks[id] = callback;
+    return id;
+  }
+
+  void _unregisterCallback(String callbackId) {
+    _signCallbacks.remove(callbackId);
+  }
+
+  Map<String, dynamic> _serializeSigner(C2paSigner signer) {
+    final map = signer.toMap();
+    if (signer is CallbackSigner) {
+      map['callbackId'] = _registerCallback(signer.signCallback);
+    }
+    return map;
+  }
 
   // ===========================================================================
   // Version and Platform Info
@@ -125,26 +175,38 @@ class MethodChannelC2pa extends C2paPlatform {
     required Uint8List sourceData,
     required String mimeType,
     required String manifestJson,
-    required SignerInfo signerInfo,
+    required C2paSigner signer,
   }) async {
-    final result = await methodChannel.invokeMethod<Map>('signBytes', {
-      'sourceData': sourceData,
-      'mimeType': mimeType,
-      'manifestJson': manifestJson,
-      'signerInfo': signerInfo.toMap(),
-    });
-
-    if (result == null) {
-      throw PlatformException(
-        code: 'ERROR',
-        message: 'Sign operation returned null',
-      );
+    final signerMap = _serializeSigner(signer);
+    String? callbackId;
+    if (signer is CallbackSigner) {
+      callbackId = signerMap['callbackId'] as String;
     }
 
-    return SignResult(
-      signedData: result['signedData'] as Uint8List,
-      manifestBytes: result['manifestBytes'] as Uint8List?,
-    );
+    try {
+      final result = await methodChannel.invokeMethod<Map>('signBytes', {
+        'sourceData': sourceData,
+        'mimeType': mimeType,
+        'manifestJson': manifestJson,
+        'signer': signerMap,
+      });
+
+      if (result == null) {
+        throw PlatformException(
+          code: 'ERROR',
+          message: 'Sign operation returned null',
+        );
+      }
+
+      return SignResult(
+        signedData: result['signedData'] as Uint8List,
+        manifestBytes: result['manifestBytes'] as Uint8List?,
+      );
+    } finally {
+      if (callbackId != null) {
+        _unregisterCallback(callbackId);
+      }
+    }
   }
 
   @override
@@ -152,14 +214,26 @@ class MethodChannelC2pa extends C2paPlatform {
     required String sourcePath,
     required String destPath,
     required String manifestJson,
-    required SignerInfo signerInfo,
+    required C2paSigner signer,
   }) async {
-    await methodChannel.invokeMethod<void>('signFile', {
-      'sourcePath': sourcePath,
-      'destPath': destPath,
-      'manifestJson': manifestJson,
-      'signerInfo': signerInfo.toMap(),
-    });
+    final signerMap = _serializeSigner(signer);
+    String? callbackId;
+    if (signer is CallbackSigner) {
+      callbackId = signerMap['callbackId'] as String;
+    }
+
+    try {
+      await methodChannel.invokeMethod<void>('signFile', {
+        'sourcePath': sourcePath,
+        'destPath': destPath,
+        'manifestJson': manifestJson,
+        'signer': signerMap,
+      });
+    } finally {
+      if (callbackId != null) {
+        _unregisterCallback(callbackId);
+      }
+    }
   }
 
   // ===========================================================================
@@ -287,27 +361,39 @@ class MethodChannelC2pa extends C2paPlatform {
     int handle,
     Uint8List sourceData,
     String mimeType,
-    SignerInfo signerInfo,
+    C2paSigner signer,
   ) async {
-    final result = await methodChannel.invokeMethod<Map>('builderSign', {
-      'handle': handle,
-      'sourceData': sourceData,
-      'mimeType': mimeType,
-      'signerInfo': signerInfo.toMap(),
-    });
-
-    if (result == null) {
-      throw PlatformException(
-        code: 'ERROR',
-        message: 'Builder sign operation returned null',
-      );
+    final signerMap = _serializeSigner(signer);
+    String? callbackId;
+    if (signer is CallbackSigner) {
+      callbackId = signerMap['callbackId'] as String;
     }
 
-    return BuilderSignResult(
-      signedData: result['signedData'] as Uint8List,
-      manifestBytes: result['manifestBytes'] as Uint8List?,
-      manifestSize: result['manifestSize'] as int? ?? 0,
-    );
+    try {
+      final result = await methodChannel.invokeMethod<Map>('builderSign', {
+        'handle': handle,
+        'sourceData': sourceData,
+        'mimeType': mimeType,
+        'signer': signerMap,
+      });
+
+      if (result == null) {
+        throw PlatformException(
+          code: 'ERROR',
+          message: 'Builder sign operation returned null',
+        );
+      }
+
+      return BuilderSignResult(
+        signedData: result['signedData'] as Uint8List,
+        manifestBytes: result['manifestBytes'] as Uint8List?,
+        manifestSize: result['manifestSize'] as int? ?? 0,
+      );
+    } finally {
+      if (callbackId != null) {
+        _unregisterCallback(callbackId);
+      }
+    }
   }
 
   @override
@@ -315,14 +401,26 @@ class MethodChannelC2pa extends C2paPlatform {
     int handle,
     String sourcePath,
     String destPath,
-    SignerInfo signerInfo,
+    C2paSigner signer,
   ) async {
-    await methodChannel.invokeMethod<void>('builderSignFile', {
-      'handle': handle,
-      'sourcePath': sourcePath,
-      'destPath': destPath,
-      'signerInfo': signerInfo.toMap(),
-    });
+    final signerMap = _serializeSigner(signer);
+    String? callbackId;
+    if (signer is CallbackSigner) {
+      callbackId = signerMap['callbackId'] as String;
+    }
+
+    try {
+      await methodChannel.invokeMethod<void>('builderSignFile', {
+        'handle': handle,
+        'sourcePath': sourcePath,
+        'destPath': destPath,
+        'signer': signerMap,
+      });
+    } finally {
+      if (callbackId != null) {
+        _unregisterCallback(callbackId);
+      }
+    }
   }
 
   @override
@@ -364,28 +462,40 @@ class MethodChannelC2pa extends C2paPlatform {
   @override
   Future<Uint8List> signHashedEmbeddable({
     required int builderHandle,
-    required SignerInfo signerInfo,
+    required C2paSigner signer,
     required String dataHash,
     required String mimeType,
     Uint8List? assetData,
   }) async {
-    final result = await methodChannel
-        .invokeMethod<Uint8List>('signHashedEmbeddable', {
-          'handle': builderHandle,
-          'signerInfo': signerInfo.toMap(),
-          'dataHash': dataHash,
-          'mimeType': mimeType,
-          'assetData': assetData,
-        });
-
-    if (result == null) {
-      throw PlatformException(
-        code: 'ERROR',
-        message: 'Failed to sign hashed embeddable',
-      );
+    final signerMap = _serializeSigner(signer);
+    String? callbackId;
+    if (signer is CallbackSigner) {
+      callbackId = signerMap['callbackId'] as String;
     }
 
-    return result;
+    try {
+      final result = await methodChannel
+          .invokeMethod<Uint8List>('signHashedEmbeddable', {
+            'handle': builderHandle,
+            'signer': signerMap,
+            'dataHash': dataHash,
+            'mimeType': mimeType,
+            'assetData': assetData,
+          });
+
+      if (result == null) {
+        throw PlatformException(
+          code: 'ERROR',
+          message: 'Failed to sign hashed embeddable',
+        );
+      }
+
+      return result;
+    } finally {
+      if (callbackId != null) {
+        _unregisterCallback(callbackId);
+      }
+    }
   }
 
   @override
@@ -409,16 +519,76 @@ class MethodChannelC2pa extends C2paPlatform {
   }
 
   @override
-  Future<int> getSignerReserveSize(SignerInfo signerInfo) async {
+  Future<int> getSignerReserveSize(C2paSigner signer) async {
     final result = await methodChannel.invokeMethod<int>(
       'getSignerReserveSize',
-      {'signerInfo': signerInfo.toMap()},
+      {'signer': signer.toMap()},
     );
 
     if (result == null) {
       throw PlatformException(
         code: 'ERROR',
         message: 'Failed to get signer reserve size',
+      );
+    }
+
+    return result;
+  }
+
+  // ===========================================================================
+  // Key Management API
+  // ===========================================================================
+
+  @override
+  Future<bool> isHardwareSigningAvailable() async {
+    final result = await methodChannel.invokeMethod<bool>(
+      'isHardwareSigningAvailable',
+    );
+    return result ?? false;
+  }
+
+  @override
+  Future<void> createKey({
+    required String keyAlias,
+    required SigningAlgorithm algorithm,
+    required bool useHardware,
+  }) async {
+    await methodChannel.invokeMethod<void>('createKey', {
+      'keyAlias': keyAlias,
+      'algorithm': algorithm.name,
+      'useHardware': useHardware,
+    });
+  }
+
+  @override
+  Future<bool> deleteKey(String keyAlias) async {
+    final result = await methodChannel.invokeMethod<bool>(
+      'deleteKey',
+      {'keyAlias': keyAlias},
+    );
+    return result ?? false;
+  }
+
+  @override
+  Future<bool> keyExists(String keyAlias) async {
+    final result = await methodChannel.invokeMethod<bool>(
+      'keyExists',
+      {'keyAlias': keyAlias},
+    );
+    return result ?? false;
+  }
+
+  @override
+  Future<String> exportPublicKey(String keyAlias) async {
+    final result = await methodChannel.invokeMethod<String>(
+      'exportPublicKey',
+      {'keyAlias': keyAlias},
+    );
+
+    if (result == null) {
+      throw PlatformException(
+        code: 'ERROR',
+        message: 'Failed to export public key',
       );
     }
 
@@ -550,11 +720,11 @@ class MethodChannelManifestBuilder implements ManifestBuilder {
   Future<BuilderSignResult> sign({
     required Uint8List sourceData,
     required String mimeType,
-    required SignerInfo signerInfo,
+    required C2paSigner signer,
   }) async {
     _checkDisposed();
     await _applyPendingOperations();
-    return _platform.builderSign(_handle, sourceData, mimeType, signerInfo);
+    return _platform.builderSign(_handle, sourceData, mimeType, signer);
   }
 
   @override

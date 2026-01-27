@@ -17,13 +17,22 @@ import org.contentauth.c2pa.C2PAError
 import org.contentauth.c2pa.BuilderIntent
 import org.contentauth.c2pa.DigitalSourceType
 import org.contentauth.c2pa.Action
+import org.contentauth.c2pa.KeyStoreSigner
+import org.contentauth.c2pa.StrongBoxSigner
+import org.contentauth.c2pa.WebServiceSigner
 import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
 import java.util.concurrent.locks.ReentrantLock
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 class C2paPlugin : FlutterPlugin, MethodCallHandler {
     private lateinit var channel: MethodChannel
+    private var context: android.content.Context? = null
+    private val mainScope = CoroutineScope(Dispatchers.Main)
 
     // Builder handle management
     private val builders = HashMap<Int, Builder>()
@@ -33,6 +42,7 @@ class C2paPlugin : FlutterPlugin, MethodCallHandler {
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         channel = MethodChannel(flutterPluginBinding.binaryMessenger, "org.guardianproject.c2pa")
         channel.setMethodCallHandler(this)
+        context = flutterPluginBinding.applicationContext
     }
 
     override fun onMethodCall(call: MethodCall, result: Result) {
@@ -80,6 +90,13 @@ class C2paPlugin : FlutterPlugin, MethodCallHandler {
 
             // Settings API
             "loadSettings" -> handleLoadSettings(call, result)
+
+            // Key Management API
+            "isHardwareSigningAvailable" -> handleIsHardwareSigningAvailable(result)
+            "createKey" -> handleCreateKey(call, result)
+            "deleteKey" -> handleDeleteKey(call, result)
+            "keyExists" -> handleKeyExists(call, result)
+            "exportPublicKey" -> handleExportPublicKey(call, result)
 
             else -> result.notImplemented()
         }
@@ -286,59 +303,121 @@ class C2paPlugin : FlutterPlugin, MethodCallHandler {
         val sourceData = call.argument<ByteArray>("sourceData")
         val mimeType = call.argument<String>("mimeType")
         val manifestJson = call.argument<String>("manifestJson")
-        val signerInfoMap = call.argument<Map<String, Any?>>("signerInfo")
+        val signerMap = call.argument<Map<String, Any?>>("signer")
 
-        if (sourceData == null || mimeType == null || manifestJson == null || signerInfoMap == null) {
-            result.error("INVALID_ARGUMENT", "sourceData, mimeType, manifestJson, and signerInfo are required", null)
+        if (sourceData == null || mimeType == null || manifestJson == null || signerMap == null) {
+            result.error("INVALID_ARGUMENT", "sourceData, mimeType, manifestJson, and signer are required", null)
             return
         }
 
-        try {
-            val signerInfo = parseSignerInfo(signerInfoMap)
-            val signer = Signer.fromInfo(signerInfo)
+        val signerType = signerMap["type"] as? String ?: "pem"
 
-            val builder = Builder.fromJson(manifestJson)
-            val sourceStream = ByteArrayStream(sourceData)
-            val destStream = ByteArrayStream()
-
-            val signResult = builder.sign(mimeType, sourceStream, destStream, signer)
-
-            val signedData = destStream.getData()
-
-            builder.close()
-            signer.close()
-
-            val resultMap = HashMap<String, Any?>()
-            resultMap["signedData"] = signedData
-            resultMap["manifestBytes"] = signResult.manifestBytes
-
-            result.success(resultMap)
-        } catch (e: C2PAError) {
-            result.error("C2PA_ERROR", e.message, null)
-        } catch (e: Exception) {
-            result.error("ERROR", e.message, null)
+        // Handle async signers (remote) differently
+        if (signerType == "remote") {
+            mainScope.launch {
+                try {
+                    val signer = createSignerAsync(signerMap)
+                    performSignBytes(sourceData, mimeType, manifestJson, signer, result)
+                    signer.close()
+                } catch (e: C2PAError) {
+                    result.error("C2PA_ERROR", e.message, null)
+                } catch (e: Exception) {
+                    result.error("ERROR", e.message, null)
+                }
+            }
+        } else {
+            try {
+                val signer = createSigner(signerMap, result) ?: return
+                performSignBytes(sourceData, mimeType, manifestJson, signer, result)
+                signer.close()
+            } catch (e: C2PAError) {
+                result.error("C2PA_ERROR", e.message, null)
+            } catch (e: Exception) {
+                result.error("ERROR", e.message, null)
+            }
         }
+    }
+
+    private fun performSignBytes(
+        sourceData: ByteArray,
+        mimeType: String,
+        manifestJson: String,
+        signer: Signer,
+        result: Result
+    ) {
+        val builder = Builder.fromJson(manifestJson)
+        val sourceStream = ByteArrayStream(sourceData)
+        val destStream = ByteArrayStream()
+
+        val signResult = builder.sign(mimeType, sourceStream, destStream, signer)
+
+        val signedData = destStream.getData()
+
+        builder.close()
+
+        val resultMap = HashMap<String, Any?>()
+        resultMap["signedData"] = signedData
+        resultMap["manifestBytes"] = signResult.manifestBytes
+
+        result.success(resultMap)
     }
 
     private fun handleSignFile(call: MethodCall, result: Result) {
         val sourcePath = call.argument<String>("sourcePath")
         val destPath = call.argument<String>("destPath")
         val manifestJson = call.argument<String>("manifestJson")
-        val signerInfoMap = call.argument<Map<String, Any?>>("signerInfo")
+        val signerMap = call.argument<Map<String, Any?>>("signer")
 
-        if (sourcePath == null || destPath == null || manifestJson == null || signerInfoMap == null) {
-            result.error("INVALID_ARGUMENT", "sourcePath, destPath, manifestJson, and signerInfo are required", null)
+        if (sourcePath == null || destPath == null || manifestJson == null || signerMap == null) {
+            result.error("INVALID_ARGUMENT", "sourcePath, destPath, manifestJson, and signer are required", null)
             return
         }
 
-        try {
-            val signerInfo = parseSignerInfo(signerInfoMap)
-            C2PA.signFile(sourcePath, destPath, manifestJson, signerInfo, null)
-            result.success(null)
-        } catch (e: C2PAError) {
-            result.error("C2PA_ERROR", e.message, null)
-        } catch (e: Exception) {
-            result.error("ERROR", e.message, null)
+        val signerType = signerMap["type"] as? String ?: "pem"
+
+        // For PEM signers, use the static API
+        if (signerType == "pem") {
+            try {
+                val algorithmStr = signerMap["algorithm"] as String
+                val certificatePem = signerMap["certificatePem"] as String
+                val privateKeyPem = signerMap["privateKeyPem"] as String
+                val tsaUrl = signerMap["tsaUrl"] as String?
+                val algorithm = parseAlgorithm(algorithmStr)
+                val signerInfo = SignerInfo(algorithm, certificatePem, privateKeyPem, tsaUrl)
+                C2PA.signFile(sourcePath, destPath, manifestJson, signerInfo, null)
+                result.success(null)
+            } catch (e: C2PAError) {
+                result.error("C2PA_ERROR", e.message, null)
+            } catch (e: Exception) {
+                result.error("ERROR", e.message, null)
+            }
+        } else {
+            // For other signer types, read file and use stream signing
+            mainScope.launch {
+                try {
+                    val signer = createSignerAsync(signerMap)
+                    val sourceFile = File(sourcePath)
+                    val sourceData = sourceFile.readBytes()
+                    val mimeType = getMimeTypeFromPath(sourcePath)
+
+                    val builder = Builder.fromJson(manifestJson)
+                    val sourceStream = ByteArrayStream(sourceData)
+                    val destStream = ByteArrayStream()
+
+                    builder.sign(mimeType, sourceStream, destStream, signer)
+
+                    val destFile = File(destPath)
+                    destFile.writeBytes(destStream.getData())
+
+                    builder.close()
+                    signer.close()
+                    result.success(null)
+                } catch (e: C2PAError) {
+                    result.error("C2PA_ERROR", e.message, null)
+                } catch (e: Exception) {
+                    result.error("ERROR", e.message, null)
+                }
+            }
         }
     }
 
@@ -636,91 +715,131 @@ class C2paPlugin : FlutterPlugin, MethodCallHandler {
         val handle = call.argument<Int>("handle")
         val sourceData = call.argument<ByteArray>("sourceData")
         val mimeType = call.argument<String>("mimeType")
-        val signerInfoMap = call.argument<Map<String, Any?>>("signerInfo")
+        val signerMap = call.argument<Map<String, Any?>>("signer")
 
-        if (handle == null || sourceData == null || mimeType == null || signerInfoMap == null) {
-            result.error("INVALID_ARGUMENT", "handle, sourceData, mimeType, and signerInfo are required", null)
+        if (handle == null || sourceData == null || mimeType == null || signerMap == null) {
+            result.error("INVALID_ARGUMENT", "handle, sourceData, mimeType, and signer are required", null)
             return
         }
 
-        try {
-            val builder = getBuilder(handle)
-            if (builder == null) {
-                result.error("INVALID_HANDLE", "Invalid builder handle", null)
-                return
-            }
-
-            val signerInfo = parseSignerInfo(signerInfoMap)
-            val signer = Signer.fromInfo(signerInfo)
-
-            val sourceStream = ByteArrayStream(sourceData)
-            val destStream = ByteArrayStream()
-
-            val signResult = builder.sign(mimeType, sourceStream, destStream, signer)
-            val signedData = destStream.getData()
-
-            signer.close()
-
-            val resultMap = HashMap<String, Any?>()
-            resultMap["signedData"] = signedData
-            resultMap["manifestBytes"] = signResult.manifestBytes
-            resultMap["manifestSize"] = signResult.manifestBytes?.size ?: 0
-
-            result.success(resultMap)
-        } catch (e: C2PAError) {
-            result.error("C2PA_ERROR", e.message, null)
-        } catch (e: Exception) {
-            result.error("ERROR", e.message, null)
+        val builder = getBuilder(handle)
+        if (builder == null) {
+            result.error("INVALID_HANDLE", "Invalid builder handle", null)
+            return
         }
+
+        val signerType = signerMap["type"] as? String ?: "pem"
+
+        if (signerType == "remote") {
+            mainScope.launch {
+                try {
+                    val signer = createSignerAsync(signerMap)
+                    performBuilderSign(builder, sourceData, mimeType, signer, result)
+                    signer.close()
+                } catch (e: C2PAError) {
+                    result.error("C2PA_ERROR", e.message, null)
+                } catch (e: Exception) {
+                    result.error("ERROR", e.message, null)
+                }
+            }
+        } else {
+            try {
+                val signer = createSigner(signerMap, result) ?: return
+                performBuilderSign(builder, sourceData, mimeType, signer, result)
+                signer.close()
+            } catch (e: C2PAError) {
+                result.error("C2PA_ERROR", e.message, null)
+            } catch (e: Exception) {
+                result.error("ERROR", e.message, null)
+            }
+        }
+    }
+
+    private fun performBuilderSign(
+        builder: Builder,
+        sourceData: ByteArray,
+        mimeType: String,
+        signer: Signer,
+        result: Result
+    ) {
+        val sourceStream = ByteArrayStream(sourceData)
+        val destStream = ByteArrayStream()
+
+        val signResult = builder.sign(mimeType, sourceStream, destStream, signer)
+        val signedData = destStream.getData()
+
+        val resultMap = HashMap<String, Any?>()
+        resultMap["signedData"] = signedData
+        resultMap["manifestBytes"] = signResult.manifestBytes
+        resultMap["manifestSize"] = signResult.manifestBytes?.size ?: 0
+
+        result.success(resultMap)
     }
 
     private fun handleBuilderSignFile(call: MethodCall, result: Result) {
         val handle = call.argument<Int>("handle")
         val sourcePath = call.argument<String>("sourcePath")
         val destPath = call.argument<String>("destPath")
-        val signerInfoMap = call.argument<Map<String, Any?>>("signerInfo")
+        val signerMap = call.argument<Map<String, Any?>>("signer")
 
-        if (handle == null || sourcePath == null || destPath == null || signerInfoMap == null) {
-            result.error("INVALID_ARGUMENT", "handle, sourcePath, destPath, and signerInfo are required", null)
+        if (handle == null || sourcePath == null || destPath == null || signerMap == null) {
+            result.error("INVALID_ARGUMENT", "handle, sourcePath, destPath, and signer are required", null)
             return
         }
 
-        try {
-            val builder = getBuilder(handle)
-            if (builder == null) {
-                result.error("INVALID_HANDLE", "Invalid builder handle", null)
-                return
-            }
-
-            val signerInfo = parseSignerInfo(signerInfoMap)
-            val signer = Signer.fromInfo(signerInfo)
-
-            // Note: The native C2PA library doesn't have a signFile method, so we read the
-            // entire file into memory. For large files (especially videos), this may cause
-            // out-of-memory errors. Consider using sign() with streamed data instead.
-            val sourceFile = File(sourcePath)
-            val sourceData = sourceFile.readBytes()
-
-            // Determine MIME type from extension
-            val mimeType = getMimeTypeFromPath(sourcePath)
-
-            val sourceStream = ByteArrayStream(sourceData)
-            val destStream = ByteArrayStream()
-
-            builder.sign(mimeType, sourceStream, destStream, signer)
-
-            // Write output to destination file
-            val destFile = File(destPath)
-            destFile.writeBytes(destStream.getData())
-
-            signer.close()
-
-            result.success(null)
-        } catch (e: C2PAError) {
-            result.error("C2PA_ERROR", e.message, null)
-        } catch (e: Exception) {
-            result.error("ERROR", e.message, null)
+        val builder = getBuilder(handle)
+        if (builder == null) {
+            result.error("INVALID_HANDLE", "Invalid builder handle", null)
+            return
         }
+
+        val signerType = signerMap["type"] as? String ?: "pem"
+
+        if (signerType == "remote") {
+            mainScope.launch {
+                try {
+                    val signer = createSignerAsync(signerMap)
+                    performBuilderSignFile(builder, sourcePath, destPath, signer, result)
+                    signer.close()
+                } catch (e: C2PAError) {
+                    result.error("C2PA_ERROR", e.message, null)
+                } catch (e: Exception) {
+                    result.error("ERROR", e.message, null)
+                }
+            }
+        } else {
+            try {
+                val signer = createSigner(signerMap, result) ?: return
+                performBuilderSignFile(builder, sourcePath, destPath, signer, result)
+                signer.close()
+            } catch (e: C2PAError) {
+                result.error("C2PA_ERROR", e.message, null)
+            } catch (e: Exception) {
+                result.error("ERROR", e.message, null)
+            }
+        }
+    }
+
+    private fun performBuilderSignFile(
+        builder: Builder,
+        sourcePath: String,
+        destPath: String,
+        signer: Signer,
+        result: Result
+    ) {
+        val sourceFile = File(sourcePath)
+        val sourceData = sourceFile.readBytes()
+        val mimeType = getMimeTypeFromPath(sourcePath)
+
+        val sourceStream = ByteArrayStream(sourceData)
+        val destStream = ByteArrayStream()
+
+        builder.sign(mimeType, sourceStream, destStream, signer)
+
+        val destFile = File(destPath)
+        destFile.writeBytes(destStream.getData())
+
+        result.success(null)
     }
 
     private fun getMimeTypeFromPath(path: String): String {
@@ -795,35 +914,50 @@ class C2paPlugin : FlutterPlugin, MethodCallHandler {
 
     private fun handleSignHashedEmbeddable(call: MethodCall, result: Result) {
         val handle = call.argument<Int>("handle")
-        val signerInfoMap = call.argument<Map<String, Any?>>("signerInfo")
+        val signerMap = call.argument<Map<String, Any?>>("signer")
         val dataHash = call.argument<String>("dataHash")
         val mimeType = call.argument<String>("mimeType")
         val assetData = call.argument<ByteArray>("assetData")
 
-        if (handle == null || signerInfoMap == null || dataHash == null || mimeType == null) {
-            result.error("INVALID_ARGUMENT", "handle, signerInfo, dataHash, and mimeType are required", null)
+        if (handle == null || signerMap == null || dataHash == null || mimeType == null) {
+            result.error("INVALID_ARGUMENT", "handle, signer, dataHash, and mimeType are required", null)
             return
         }
 
-        try {
-            val builder = getBuilder(handle)
-            if (builder == null) {
-                result.error("INVALID_HANDLE", "Invalid builder handle", null)
-                return
+        val builder = getBuilder(handle)
+        if (builder == null) {
+            result.error("INVALID_HANDLE", "Invalid builder handle", null)
+            return
+        }
+
+        val signerType = signerMap["type"] as? String ?: "pem"
+
+        if (signerType == "remote") {
+            mainScope.launch {
+                try {
+                    val signer = createSignerAsync(signerMap)
+                    val assetStream = if (assetData != null) ByteArrayStream(assetData) else null
+                    val embeddableData = builder.signDataHashedEmbeddable(signer, dataHash, mimeType, assetStream)
+                    signer.close()
+                    result.success(embeddableData)
+                } catch (e: C2PAError) {
+                    result.error("C2PA_ERROR", e.message, null)
+                } catch (e: Exception) {
+                    result.error("ERROR", e.message, null)
+                }
             }
-
-            val signerInfo = parseSignerInfo(signerInfoMap)
-            val signer = Signer.fromInfo(signerInfo)
-
-            val assetStream = if (assetData != null) ByteArrayStream(assetData) else null
-            val embeddableData = builder.signDataHashedEmbeddable(signer, dataHash, mimeType, assetStream)
-
-            signer.close()
-            result.success(embeddableData)
-        } catch (e: C2PAError) {
-            result.error("C2PA_ERROR", e.message, null)
-        } catch (e: Exception) {
-            result.error("ERROR", e.message, null)
+        } else {
+            try {
+                val signer = createSigner(signerMap, result) ?: return
+                val assetStream = if (assetData != null) ByteArrayStream(assetData) else null
+                val embeddableData = builder.signDataHashedEmbeddable(signer, dataHash, mimeType, assetStream)
+                signer.close()
+                result.success(embeddableData)
+            } catch (e: C2PAError) {
+                result.error("C2PA_ERROR", e.message, null)
+            } catch (e: Exception) {
+                result.error("ERROR", e.message, null)
+            }
         }
     }
 
@@ -844,23 +978,39 @@ class C2paPlugin : FlutterPlugin, MethodCallHandler {
     }
 
     private fun handleGetSignerReserveSize(call: MethodCall, result: Result) {
-        val signerInfoMap = call.argument<Map<String, Any?>>("signerInfo")
+        val signerMap = call.argument<Map<String, Any?>>("signer")
 
-        if (signerInfoMap == null) {
-            result.error("INVALID_ARGUMENT", "signerInfo is required", null)
+        if (signerMap == null) {
+            result.error("INVALID_ARGUMENT", "signer is required", null)
             return
         }
 
-        try {
-            val signerInfo = parseSignerInfo(signerInfoMap)
-            val signer = Signer.fromInfo(signerInfo)
-            val reserveSize = signer.reserveSize()
-            signer.close()
-            result.success(reserveSize)
-        } catch (e: C2PAError) {
-            result.error("C2PA_ERROR", e.message, null)
-        } catch (e: Exception) {
-            result.error("ERROR", e.message, null)
+        val signerType = signerMap["type"] as? String ?: "pem"
+
+        if (signerType == "remote") {
+            mainScope.launch {
+                try {
+                    val signer = createSignerAsync(signerMap)
+                    val reserveSize = signer.reserveSize()
+                    signer.close()
+                    result.success(reserveSize)
+                } catch (e: C2PAError) {
+                    result.error("C2PA_ERROR", e.message, null)
+                } catch (e: Exception) {
+                    result.error("ERROR", e.message, null)
+                }
+            }
+        } else {
+            try {
+                val signer = createSigner(signerMap, result) ?: return
+                val reserveSize = signer.reserveSize()
+                signer.close()
+                result.success(reserveSize)
+            } catch (e: C2PAError) {
+                result.error("C2PA_ERROR", e.message, null)
+            } catch (e: Exception) {
+                result.error("ERROR", e.message, null)
+            }
         }
     }
 
@@ -891,13 +1041,8 @@ class C2paPlugin : FlutterPlugin, MethodCallHandler {
     // Helper Functions
     // ===========================================================================
 
-    private fun parseSignerInfo(map: Map<String, Any?>): SignerInfo {
-        val algorithmStr = map["algorithm"] as String
-        val certificatePem = map["certificatePem"] as String
-        val privateKeyPem = map["privateKeyPem"] as String
-        val tsaUrl = map["tsaUrl"] as String?
-
-        val algorithm = when (algorithmStr) {
+    private fun parseAlgorithm(algorithmStr: String): SigningAlgorithm {
+        return when (algorithmStr) {
             "es256" -> SigningAlgorithm.ES256
             "es384" -> SigningAlgorithm.ES384
             "es512" -> SigningAlgorithm.ES512
@@ -907,8 +1052,133 @@ class C2paPlugin : FlutterPlugin, MethodCallHandler {
             "ed25519" -> SigningAlgorithm.ED25519
             else -> SigningAlgorithm.ES256
         }
+    }
 
-        return SignerInfo(algorithm, certificatePem, privateKeyPem, tsaUrl)
+    private fun createSigner(map: Map<String, Any?>, result: Result): Signer? {
+        val type = map["type"] as? String ?: "pem"
+
+        return try {
+            when (type) {
+                "pem" -> createPemSigner(map)
+                "callback" -> createCallbackSigner(map)
+                "keystore" -> createKeystoreSigner(map)
+                "hardware" -> createHardwareSigner(map)
+                "remote" -> {
+                    // Remote signer is async, needs special handling
+                    null // Will be handled separately
+                }
+                else -> {
+                    result.error("INVALID_ARGUMENT", "Unknown signer type: $type", null)
+                    null
+                }
+            }
+        } catch (e: Exception) {
+            result.error("SIGNER_ERROR", "Failed to create signer: ${e.message}", null)
+            null
+        }
+    }
+
+    private suspend fun createSignerAsync(map: Map<String, Any?>): Signer {
+        val type = map["type"] as? String ?: "pem"
+
+        return when (type) {
+            "pem" -> createPemSigner(map)
+            "callback" -> createCallbackSigner(map)
+            "keystore" -> createKeystoreSigner(map)
+            "hardware" -> createHardwareSigner(map)
+            "remote" -> createRemoteSigner(map)
+            else -> throw IllegalArgumentException("Unknown signer type: $type")
+        }
+    }
+
+    private fun createPemSigner(map: Map<String, Any?>): Signer {
+        val algorithmStr = map["algorithm"] as String
+        val certificatePem = map["certificatePem"] as String
+        val privateKeyPem = map["privateKeyPem"] as String
+        val tsaUrl = map["tsaUrl"] as String?
+
+        val algorithm = parseAlgorithm(algorithmStr)
+        val signerInfo = SignerInfo(algorithm, certificatePem, privateKeyPem, tsaUrl)
+        return Signer.fromInfo(signerInfo)
+    }
+
+    private fun createCallbackSigner(map: Map<String, Any?>): Signer {
+        val algorithmStr = map["algorithm"] as String
+        val certificateChainPem = map["certificateChainPem"] as String
+        val tsaUrl = map["tsaUrl"] as String?
+        val callbackId = map["callbackId"] as String
+
+        val algorithm = parseAlgorithm(algorithmStr)
+
+        return Signer.withCallback(algorithm, certificateChainPem, tsaUrl) { data ->
+            // Invoke Dart callback via method channel
+            val callResult = runBlocking {
+                kotlinx.coroutines.suspendCancellableCoroutine<ByteArray> { continuation ->
+                    mainScope.launch {
+                        try {
+                            channel.invokeMethod(
+                                "signCallback",
+                                mapOf("callbackId" to callbackId, "data" to data),
+                                object : Result {
+                                    override fun success(result: Any?) {
+                                        continuation.resume(result as ByteArray) {}
+                                    }
+                                    override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
+                                        continuation.cancel(Exception("Callback error: $errorMessage"))
+                                    }
+                                    override fun notImplemented() {
+                                        continuation.cancel(Exception("Callback not implemented"))
+                                    }
+                                }
+                            )
+                        } catch (e: Exception) {
+                            continuation.cancel(e)
+                        }
+                    }
+                }
+            }
+            callResult
+        }
+    }
+
+    private fun createKeystoreSigner(map: Map<String, Any?>): Signer {
+        val algorithmStr = map["algorithm"] as String
+        val certificateChainPem = map["certificateChainPem"] as String
+        val keyAlias = map["keyAlias"] as String
+        val tsaUrl = map["tsaUrl"] as String?
+
+        val algorithm = parseAlgorithm(algorithmStr)
+
+        return KeyStoreSigner.createSigner(algorithm, certificateChainPem, keyAlias, tsaUrl)
+    }
+
+    private fun createHardwareSigner(map: Map<String, Any?>): Signer {
+        val certificateChainPem = map["certificateChainPem"] as String
+        val keyAlias = map["keyAlias"] as String
+        val tsaUrl = map["tsaUrl"] as String?
+        val requireUserAuthentication = map["requireUserAuthentication"] as? Boolean ?: false
+
+        val config = StrongBoxSigner.Config(
+            keyTag = keyAlias,
+            requireUserAuthentication = requireUserAuthentication
+        )
+
+        return StrongBoxSigner.createSigner(
+            SigningAlgorithm.ES256, // StrongBox only supports ES256
+            certificateChainPem,
+            config,
+            tsaUrl
+        )
+    }
+
+    private suspend fun createRemoteSigner(map: Map<String, Any?>): Signer {
+        val configurationUrl = map["configurationUrl"] as String
+        val bearerToken = map["bearerToken"] as String?
+        @Suppress("UNCHECKED_CAST")
+        val customHeaders = (map["customHeaders"] as? Map<String, String>) ?: emptyMap()
+
+        val webServiceSigner = WebServiceSigner(configurationUrl, bearerToken, customHeaders)
+        return webServiceSigner.createSigner()
     }
 
     private fun mapIntent(intent: String, digitalSourceType: DigitalSourceType = DigitalSourceType.DIGITAL_CAPTURE): BuilderIntent {
@@ -942,6 +1212,116 @@ class C2paPlugin : FlutterPlugin, MethodCallHandler {
             "positiveFilm" -> DigitalSourceType.POSITIVE_FILM
             "print" -> DigitalSourceType.PRINT
             else -> DigitalSourceType.DIGITAL_CAPTURE
+        }
+    }
+
+    // ===========================================================================
+    // Key Management API
+    // ===========================================================================
+
+    private fun handleIsHardwareSigningAvailable(result: Result) {
+        try {
+            val ctx = context
+            if (ctx == null) {
+                result.success(false)
+                return
+            }
+            val available = StrongBoxSigner.isAvailable(ctx)
+            result.success(available)
+        } catch (e: Exception) {
+            result.success(false)
+        }
+    }
+
+    private fun handleCreateKey(call: MethodCall, result: Result) {
+        val keyAlias = call.argument<String>("keyAlias")
+        val algorithmStr = call.argument<String>("algorithm")
+        val useHardware = call.argument<Boolean>("useHardware") ?: false
+
+        if (keyAlias == null || algorithmStr == null) {
+            result.error("INVALID_ARGUMENT", "keyAlias and algorithm are required", null)
+            return
+        }
+
+        try {
+            if (useHardware) {
+                val config = StrongBoxSigner.Config(keyTag = keyAlias)
+                StrongBoxSigner.createKey(config)
+            } else {
+                // For regular keystore, we would need to create a key
+                // The KeyStoreSigner doesn't expose key creation directly
+                // This would need to be done via Android KeyStore API
+                result.error("NOT_IMPLEMENTED", "Non-hardware key creation not yet implemented", null)
+                return
+            }
+            result.success(null)
+        } catch (e: Exception) {
+            result.error("ERROR", "Failed to create key: ${e.message}", null)
+        }
+    }
+
+    private fun handleDeleteKey(call: MethodCall, result: Result) {
+        val keyAlias = call.argument<String>("keyAlias")
+
+        if (keyAlias == null) {
+            result.error("INVALID_ARGUMENT", "keyAlias is required", null)
+            return
+        }
+
+        try {
+            // Try StrongBox first, then KeyStore
+            val strongBoxDeleted = StrongBoxSigner.deleteKey(keyAlias)
+            if (strongBoxDeleted) {
+                result.success(true)
+                return
+            }
+
+            val keyStoreDeleted = KeyStoreSigner.deleteKey(keyAlias)
+            result.success(keyStoreDeleted)
+        } catch (e: Exception) {
+            result.error("ERROR", "Failed to delete key: ${e.message}", null)
+        }
+    }
+
+    private fun handleKeyExists(call: MethodCall, result: Result) {
+        val keyAlias = call.argument<String>("keyAlias")
+
+        if (keyAlias == null) {
+            result.error("INVALID_ARGUMENT", "keyAlias is required", null)
+            return
+        }
+
+        try {
+            val exists = StrongBoxSigner.keyExists(keyAlias) || KeyStoreSigner.keyExists(keyAlias)
+            result.success(exists)
+        } catch (e: Exception) {
+            result.error("ERROR", "Failed to check key: ${e.message}", null)
+        }
+    }
+
+    private fun handleExportPublicKey(call: MethodCall, result: Result) {
+        val keyAlias = call.argument<String>("keyAlias")
+
+        if (keyAlias == null) {
+            result.error("INVALID_ARGUMENT", "keyAlias is required", null)
+            return
+        }
+
+        try {
+            // Export public key from keystore
+            val keyStore = java.security.KeyStore.getInstance("AndroidKeyStore")
+            keyStore.load(null)
+            val cert = keyStore.getCertificate(keyAlias)
+            if (cert == null) {
+                result.error("KEY_NOT_FOUND", "Key not found: $keyAlias", null)
+                return
+            }
+            val publicKey = cert.publicKey
+            val encoded = android.util.Base64.encodeToString(publicKey.encoded, android.util.Base64.DEFAULT)
+            val pem = "-----BEGIN PUBLIC KEY-----\n$encoded-----END PUBLIC KEY-----"
+            result.success(pem)
+        } catch (e: Exception) {
+            result.error("ERROR", "Failed to export public key: ${e.message}", null)
         }
     }
 
@@ -980,6 +1360,7 @@ class C2paPlugin : FlutterPlugin, MethodCallHandler {
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel.setMethodCallHandler(null)
+        context = null
 
         // Clean up any remaining builders
         builderLock.lock()

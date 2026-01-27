@@ -137,11 +137,11 @@ void main() {
   });
 
   group('Signer API', () {
-    late SignerInfo signerInfo;
+    late PemSigner signer;
     late Uint8List testData;
 
     setUp(() {
-      signerInfo = SignerInfo(
+      signer = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem:
             '-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----',
@@ -156,7 +156,7 @@ void main() {
         sourceData: testData,
         mimeType: 'image/jpeg',
         manifestJson: '{"title": "Test"}',
-        signerInfo: signerInfo,
+        signer: signer,
       );
 
       expect(result.signedData, isNotNull);
@@ -165,7 +165,7 @@ void main() {
     });
 
     test('signBytes with TSA URL', () async {
-      final signerWithTsa = SignerInfo(
+      final signerWithTsa = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem:
             '-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----',
@@ -178,7 +178,7 @@ void main() {
         sourceData: testData,
         mimeType: 'image/jpeg',
         manifestJson: '{"title": "Test"}',
-        signerInfo: signerWithTsa,
+        signer: signerWithTsa,
       );
 
       expect(result.signedData, isNotNull);
@@ -189,7 +189,7 @@ void main() {
         sourcePath: '/input.jpg',
         destPath: '/output.jpg',
         manifestJson: '{"title": "Test"}',
-        signerInfo: signerInfo,
+        signer: signer,
       );
 
       expect(mockPlatform.methodCalls.last.method, 'signFile');
@@ -205,7 +205,7 @@ void main() {
 
     test('all signing algorithms are supported', () async {
       for (final algorithm in SigningAlgorithm.values) {
-        final info = SignerInfo(
+        final pemSigner = PemSigner(
           algorithm: algorithm,
           certificatePem:
               '-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----',
@@ -217,7 +217,7 @@ void main() {
           sourceData: testData,
           mimeType: 'image/jpeg',
           manifestJson: '{"title": "Test ${algorithm.name}"}',
-          signerInfo: info,
+          signer: pemSigner,
         );
 
         expect(
@@ -230,11 +230,11 @@ void main() {
   });
 
   group('Builder API', () {
-    late SignerInfo signerInfo;
+    late PemSigner signer;
     late Uint8List testData;
 
     setUp(() {
-      signerInfo = SignerInfo(
+      signer = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem:
             '-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----',
@@ -349,7 +349,7 @@ void main() {
       final result = await builder.sign(
         sourceData: testData,
         mimeType: 'image/jpeg',
-        signerInfo: signerInfo,
+        signer: signer,
       );
 
       expect(result.signedData, isNotNull);
@@ -374,11 +374,11 @@ void main() {
   });
 
   group('Advanced Signing API', () {
-    late SignerInfo signerInfo;
+    late PemSigner signer;
     late ManifestBuilder builder;
 
     setUp(() async {
-      signerInfo = SignerInfo(
+      signer = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem:
             '-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----',
@@ -402,7 +402,7 @@ void main() {
     test('signHashedEmbeddable returns manifest', () async {
       final manifest = await c2pa.signHashedEmbeddable(
         builder: builder,
-        signerInfo: signerInfo,
+        signer: signer,
         dataHash: 'abc123hash',
         mimeType: 'image/jpeg',
       );
@@ -423,7 +423,7 @@ void main() {
 
     test('getSignerReserveSize returns size', () async {
       mockPlatform.mockReserveSize = 12345;
-      final size = await c2pa.getSignerReserveSize(signerInfo);
+      final size = await c2pa.getSignerReserveSize(signer);
 
       expect(size, 12345);
     });
@@ -463,7 +463,7 @@ void main() {
       mockPlatform.simulateError = true;
       mockPlatform.errorMessage = 'Signing failed';
 
-      final signerInfo = SignerInfo(
+      final signer = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem: 'cert',
         privateKeyPem: 'key',
@@ -474,7 +474,7 @@ void main() {
           sourceData: Uint8List(1),
           mimeType: 'image/jpeg',
           manifestJson: '{}',
-          signerInfo: signerInfo,
+          signer: signer,
         ),
         throwsException,
       );
@@ -482,16 +482,17 @@ void main() {
   });
 
   group('Data classes', () {
-    group('SignerInfo', () {
+    group('PemSigner', () {
       test('toMap serializes correctly', () {
-        final info = SignerInfo(
+        final signer = PemSigner(
           algorithm: SigningAlgorithm.ps256,
           certificatePem: 'cert_pem',
           privateKeyPem: 'key_pem',
           tsaUrl: 'https://tsa.example.com',
         );
 
-        final map = info.toMap();
+        final map = signer.toMap();
+        expect(map['type'], 'pem');
         expect(map['algorithm'], 'ps256');
         expect(map['certificatePem'], 'cert_pem');
         expect(map['privateKeyPem'], 'key_pem');
@@ -500,16 +501,108 @@ void main() {
 
       test('fromMap deserializes correctly', () {
         final map = {
+          'type': 'pem',
           'algorithm': 'ed25519',
           'certificatePem': 'cert',
           'privateKeyPem': 'key',
           'tsaUrl': null,
         };
 
-        final info = SignerInfo.fromMap(map);
-        expect(info.algorithm, SigningAlgorithm.ed25519);
-        expect(info.certificatePem, 'cert');
-        expect(info.tsaUrl, isNull);
+        final signer = PemSigner.fromMap(map);
+        expect(signer.algorithm, SigningAlgorithm.ed25519);
+        expect(signer.certificatePem, 'cert');
+        expect(signer.tsaUrl, isNull);
+      });
+    });
+
+    group('CallbackSigner', () {
+      test('toMap serializes correctly', () {
+        final signer = CallbackSigner(
+          algorithm: SigningAlgorithm.es256,
+          certificateChainPem: 'cert_chain',
+          signCallback: (data) async => Uint8List.fromList([1, 2, 3]),
+          tsaUrl: 'https://tsa.example.com',
+        );
+
+        final map = signer.toMap();
+        expect(map['type'], 'callback');
+        expect(map['algorithm'], 'es256');
+        expect(map['certificateChainPem'], 'cert_chain');
+        expect(map['tsaUrl'], 'https://tsa.example.com');
+      });
+    });
+
+    group('KeystoreSigner', () {
+      test('toMap serializes correctly', () {
+        final signer = KeystoreSigner(
+          algorithm: SigningAlgorithm.es384,
+          keyAlias: 'my-key',
+          certificateChainPem: 'cert_chain',
+          tsaUrl: 'https://tsa.example.com',
+        );
+
+        final map = signer.toMap();
+        expect(map['type'], 'keystore');
+        expect(map['algorithm'], 'es384');
+        expect(map['keyAlias'], 'my-key');
+        expect(map['certificateChainPem'], 'cert_chain');
+        expect(map['tsaUrl'], 'https://tsa.example.com');
+      });
+    });
+
+    group('HardwareSigner', () {
+      test('toMap serializes correctly', () {
+        final signer = HardwareSigner(
+          keyAlias: 'secure-key',
+          certificateChainPem: 'cert_chain',
+          requireUserAuthentication: true,
+          tsaUrl: 'https://tsa.example.com',
+        );
+
+        final map = signer.toMap();
+        expect(map['type'], 'hardware');
+        expect(map['algorithm'], 'es256'); // Hardware only supports ES256
+        expect(map['keyAlias'], 'secure-key');
+        expect(map['certificateChainPem'], 'cert_chain');
+        expect(map['requireUserAuthentication'], true);
+        expect(map['tsaUrl'], 'https://tsa.example.com');
+      });
+
+      test('algorithm is always ES256', () {
+        final signer = HardwareSigner(
+          keyAlias: 'test-key',
+          certificateChainPem: 'cert',
+        );
+
+        expect(signer.algorithm, SigningAlgorithm.es256);
+      });
+    });
+
+    group('RemoteSigner', () {
+      test('toMap serializes correctly', () {
+        final signer = RemoteSigner(
+          configurationUrl: 'https://sign.example.com/config',
+          bearerToken: 'test-token',
+          customHeaders: {'X-Custom': 'value'},
+        );
+
+        final map = signer.toMap();
+        expect(map['type'], 'remote');
+        expect(map['configurationUrl'], 'https://sign.example.com/config');
+        expect(map['bearerToken'], 'test-token');
+        expect(map['customHeaders'], {'X-Custom': 'value'});
+      });
+
+      test('toMap without optional fields', () {
+        final signer = RemoteSigner(
+          configurationUrl: 'https://sign.example.com/config',
+        );
+
+        final map = signer.toMap();
+        expect(map['type'], 'remote');
+        expect(map['configurationUrl'], 'https://sign.example.com/config');
+        expect(map['bearerToken'], isNull);
+        expect(map['customHeaders'], isNull);
       });
     });
 

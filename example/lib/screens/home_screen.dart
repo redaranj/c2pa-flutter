@@ -114,7 +114,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
                 colors: [
-                  Theme.of(context).colorScheme.primary.withOpacity(0.1),
+                  Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
                   Theme.of(context).colorScheme.surface,
                 ],
               ),
@@ -147,6 +147,55 @@ class _HomeScreenState extends State<HomeScreen> {
                       ],
                     ),
                   ),
+                  // Configuration status banner
+                  if (!_manager.isConfigured)
+                    Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 16),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.shade100,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.orange.shade300),
+                      ),
+                      child: InkWell(
+                        onTap: _openSettings,
+                        child: Row(
+                          children: [
+                            Icon(Icons.warning_amber, color: Colors.orange.shade800),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                'Configure ${_manager.signingMode.title} to sign images',
+                                style: TextStyle(color: Colors.orange.shade800),
+                              ),
+                            ),
+                            Icon(Icons.arrow_forward_ios, size: 16, color: Colors.orange.shade800),
+                          ],
+                        ),
+                      ),
+                    ),
+                  // Current mode indicator
+                  if (_manager.isConfigured)
+                    Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 16),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.green.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.green.shade200),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.check_circle, size: 16, color: Colors.green.shade700),
+                          const SizedBox(width: 8),
+                          Text(
+                            _manager.signingMode.title,
+                            style: TextStyle(color: Colors.green.shade700, fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    ),
                   Expanded(
                     child: Center(
                       child: Column(
@@ -168,7 +217,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               ElevatedButton.icon(
-                                onPressed: _openCamera,
+                                onPressed: _manager.isConfigured ? _openCamera : null,
                                 icon: const Icon(Icons.camera_alt),
                                 label: const Text('Camera'),
                                 style: ElevatedButton.styleFrom(
@@ -180,7 +229,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                               const SizedBox(width: 16),
                               ElevatedButton.icon(
-                                onPressed: _pickImage,
+                                onPressed: _manager.isConfigured ? _pickImage : null,
                                 icon: const Icon(Icons.photo_library),
                                 label: const Text('Gallery'),
                                 style: ElevatedButton.styleFrom(

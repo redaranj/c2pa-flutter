@@ -74,7 +74,7 @@ void main() {
       await builder.sign(
         sourceData: Uint8List.fromList([1, 2, 3]),
         mimeType: 'image/jpeg',
-        signerInfo: SignerInfo(
+        signer: PemSigner(
           algorithm: SigningAlgorithm.es256,
           certificatePem: 'test-cert',
           privateKeyPem: 'test-key',
@@ -102,7 +102,7 @@ void main() {
       await builder.sign(
         sourceData: Uint8List.fromList([1, 2, 3]),
         mimeType: 'image/jpeg',
-        signerInfo: SignerInfo(
+        signer: PemSigner(
           algorithm: SigningAlgorithm.es256,
           certificatePem: 'test-cert',
           privateKeyPem: 'test-key',
@@ -129,7 +129,7 @@ void main() {
       await builder.sign(
         sourceData: Uint8List.fromList([1, 2, 3]),
         mimeType: 'image/jpeg',
-        signerInfo: SignerInfo(
+        signer: PemSigner(
           algorithm: SigningAlgorithm.es256,
           certificatePem: 'test-cert',
           privateKeyPem: 'test-key',
@@ -151,7 +151,7 @@ void main() {
       await builder.sign(
         sourceData: Uint8List.fromList([1, 2, 3]),
         mimeType: 'image/jpeg',
-        signerInfo: SignerInfo(
+        signer: PemSigner(
           algorithm: SigningAlgorithm.es256,
           certificatePem: 'test-cert',
           privateKeyPem: 'test-key',
@@ -176,7 +176,7 @@ void main() {
       await builder.sign(
         sourceData: Uint8List.fromList([1, 2, 3]),
         mimeType: 'image/jpeg',
-        signerInfo: SignerInfo(
+        signer: PemSigner(
           algorithm: SigningAlgorithm.es256,
           certificatePem: 'test-cert',
           privateKeyPem: 'test-key',
@@ -248,7 +248,7 @@ void main() {
       await builder.sign(
         sourceData: Uint8List.fromList([1, 2, 3]),
         mimeType: 'image/jpeg',
-        signerInfo: SignerInfo(
+        signer: PemSigner(
           algorithm: SigningAlgorithm.es256,
           certificatePem: 'test-cert',
           privateKeyPem: 'test-key',
@@ -262,7 +262,7 @@ void main() {
       await builder.sign(
         sourceData: Uint8List.fromList([1, 2, 3]),
         mimeType: 'image/jpeg',
-        signerInfo: SignerInfo(
+        signer: PemSigner(
           algorithm: SigningAlgorithm.es256,
           certificatePem: 'test-cert',
           privateKeyPem: 'test-key',

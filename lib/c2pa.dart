@@ -49,11 +49,11 @@
 /// // Configure the manifest
 /// builder.setIntent(ManifestIntent.create, DigitalSourceType.digitalCapture);
 ///
-/// // Sign the content
+/// // Sign the content with a PEM signer
 /// final result = await builder.sign(
 ///   sourceData: imageBytes,
 ///   mimeType: 'image/jpeg',
-///   signerInfo: SignerInfo(
+///   signer: PemSigner(
 ///     algorithm: SigningAlgorithm.es256,
 ///     certificatePem: certificatePem,
 ///     privateKeyPem: privateKeyPem,
@@ -64,12 +64,22 @@
 /// builder.dispose();
 /// ```
 ///
+/// ## Signer Types
+///
+/// Multiple signer types are available for different use cases:
+///
+/// - [PemSigner] - Direct signing with PEM certificate and private key
+/// - [CallbackSigner] - Custom callback-based signing (HSM, smart cards)
+/// - [KeystoreSigner] - Android Keystore / iOS Keychain
+/// - [HardwareSigner] - StrongBox (Android) / Secure Enclave (iOS)
+/// - [RemoteSigner] - Remote web service signing
+///
 /// ## Key Classes
 ///
 /// - [C2pa] - Main entry point for all C2PA operations
 /// - [ManifestBuilder] - Builder pattern for creating manifests
 /// - [ManifestStoreInfo] - Parsed manifest data with validation info
-/// - [SignerInfo] - Configuration for signing operations
+/// - [C2paSigner] - Base class for all signer types
 /// - [SigningAlgorithm] - Supported cryptographic algorithms
 ///
 /// ## See Also
@@ -142,18 +152,42 @@ enum IngredientRelationship { parentOf, componentOf }
 // Core Data Classes
 // =============================================================================
 
-/// Configuration for signing operations.
+// =============================================================================
+// Signer Types
+// =============================================================================
+
+/// Base sealed class for all C2PA signer types.
 ///
-/// Provides the cryptographic credentials needed to sign C2PA manifests.
+/// Use one of the concrete implementations:
+/// - [PemSigner] - Direct signing with PEM certificate and private key
+/// - [CallbackSigner] - Custom callback-based signing
+/// - [KeystoreSigner] - Android Keystore / iOS Keychain signing
+/// - [HardwareSigner] - Hardware-backed signing (StrongBox/Secure Enclave)
+/// - [RemoteSigner] - Remote web service signing
+sealed class C2paSigner {
+  /// The signing algorithm to use.
+  SigningAlgorithm get algorithm;
+
+  /// Optional RFC 3161 Time Stamp Authority URL for trusted timestamps.
+  String? get tsaUrl;
+
+  /// Convert to a map for platform channel serialization.
+  Map<String, dynamic> toMap();
+}
+
+/// PEM certificate + private key signer.
+///
+/// This is the most common signer type where you have direct access to
+/// the certificate chain and private key in PEM format.
 ///
 /// ## Example
 ///
 /// ```dart
-/// final signerInfo = SignerInfo(
+/// final signer = PemSigner(
 ///   algorithm: SigningAlgorithm.es256,
 ///   certificatePem: await File('cert.pem').readAsString(),
 ///   privateKeyPem: await File('key.pem').readAsString(),
-///   tsaUrl: 'http://timestamp.digicert.com', // Optional
+///   tsaUrl: 'http://timestamp.digicert.com',
 /// );
 /// ```
 ///
@@ -162,8 +196,8 @@ enum IngredientRelationship { parentOf, componentOf }
 /// - ECDSA: [SigningAlgorithm.es256], [SigningAlgorithm.es384], [SigningAlgorithm.es512]
 /// - RSA-PSS: [SigningAlgorithm.ps256], [SigningAlgorithm.ps384], [SigningAlgorithm.ps512]
 /// - EdDSA: [SigningAlgorithm.ed25519]
-class SignerInfo {
-  /// The signing algorithm to use.
+class PemSigner extends C2paSigner {
+  @override
   final SigningAlgorithm algorithm;
 
   /// PEM-encoded X.509 certificate chain.
@@ -172,18 +206,20 @@ class SignerInfo {
   /// PEM-encoded private key (must match the certificate's public key).
   final String privateKeyPem;
 
-  /// Optional RFC 3161 Time Stamp Authority URL for trusted timestamps.
+  @override
   final String? tsaUrl;
 
-  SignerInfo({
+  PemSigner({
     required this.algorithm,
     required this.certificatePem,
     required this.privateKeyPem,
     this.tsaUrl,
   });
 
+  @override
   Map<String, dynamic> toMap() {
     return {
+      'type': 'pem',
       'algorithm': algorithm.name,
       'certificatePem': certificatePem,
       'privateKeyPem': privateKeyPem,
@@ -191,8 +227,8 @@ class SignerInfo {
     };
   }
 
-  factory SignerInfo.fromMap(Map<String, dynamic> map) {
-    return SignerInfo(
+  factory PemSigner.fromMap(Map<String, dynamic> map) {
+    return PemSigner(
       algorithm: SigningAlgorithm.values.firstWhere(
         (e) => e.name == map['algorithm'],
         orElse: () => SigningAlgorithm.es256,
@@ -201,6 +237,236 @@ class SignerInfo {
       privateKeyPem: map['privateKeyPem'] as String,
       tsaUrl: map['tsaUrl'] as String?,
     );
+  }
+}
+
+/// Custom callback-based signer.
+///
+/// Use this when you need to implement custom signing logic, such as
+/// integrating with a custom HSM, smart card, or other signing service.
+///
+/// ## Example
+///
+/// ```dart
+/// final signer = CallbackSigner(
+///   algorithm: SigningAlgorithm.es256,
+///   certificateChainPem: certChain,
+///   signCallback: (data) async {
+///     // Your custom signing logic here
+///     return await myHsm.sign(data);
+///   },
+/// );
+/// ```
+class CallbackSigner extends C2paSigner {
+  @override
+  final SigningAlgorithm algorithm;
+
+  /// PEM-encoded X.509 certificate chain.
+  final String certificateChainPem;
+
+  /// Callback function that performs the actual signing.
+  /// Receives the data to sign and returns the signature bytes.
+  final Future<Uint8List> Function(Uint8List data) signCallback;
+
+  @override
+  final String? tsaUrl;
+
+  CallbackSigner({
+    required this.algorithm,
+    required this.certificateChainPem,
+    required this.signCallback,
+    this.tsaUrl,
+  });
+
+  @override
+  Map<String, dynamic> toMap() {
+    return {
+      'type': 'callback',
+      'algorithm': algorithm.name,
+      'certificateChainPem': certificateChainPem,
+      'tsaUrl': tsaUrl,
+    };
+  }
+}
+
+/// Android Keystore / iOS Keychain signer.
+///
+/// Signs using a key stored in the platform's secure key storage:
+/// - Android: Android Keystore
+/// - iOS: iOS Keychain
+///
+/// The key must already exist in the keystore/keychain before creating
+/// the signer. Use [C2pa.createKeystoreKey] to generate a new key.
+///
+/// ## Example
+///
+/// ```dart
+/// final signer = KeystoreSigner(
+///   algorithm: SigningAlgorithm.es256,
+///   certificateChainPem: certChain,
+///   keyAlias: 'my-signing-key',
+///   requireUserAuthentication: true, // Requires biometric on Android
+/// );
+/// ```
+///
+/// ## Platform Notes
+///
+/// - Ed25519 is not supported on either platform for keystore signing
+/// - On Android with [requireUserAuthentication], a biometric prompt is shown
+class KeystoreSigner extends C2paSigner {
+  @override
+  final SigningAlgorithm algorithm;
+
+  /// PEM-encoded X.509 certificate chain.
+  final String certificateChainPem;
+
+  /// The alias/tag identifying the key in the keystore/keychain.
+  final String keyAlias;
+
+  /// Whether to require user authentication (biometric) before signing.
+  /// On Android, this shows a biometric prompt.
+  final bool requireUserAuthentication;
+
+  @override
+  final String? tsaUrl;
+
+  KeystoreSigner({
+    required this.algorithm,
+    required this.certificateChainPem,
+    required this.keyAlias,
+    this.requireUserAuthentication = false,
+    this.tsaUrl,
+  });
+
+  @override
+  Map<String, dynamic> toMap() {
+    return {
+      'type': 'keystore',
+      'algorithm': algorithm.name,
+      'certificateChainPem': certificateChainPem,
+      'keyAlias': keyAlias,
+      'requireUserAuthentication': requireUserAuthentication,
+      'tsaUrl': tsaUrl,
+    };
+  }
+}
+
+/// Hardware-backed signer (StrongBox on Android, Secure Enclave on iOS).
+///
+/// Provides the highest level of key protection using dedicated hardware:
+/// - Android: StrongBox (requires Android 9.0+ and device support)
+/// - iOS: Secure Enclave (requires iPhone 5s or later, not available in Simulator)
+///
+/// ## Important Limitations
+///
+/// - Only ES256 algorithm is supported on both platforms
+/// - Keys cannot be exported from the hardware
+/// - The key must already exist or will be created automatically
+///
+/// ## Example
+///
+/// ```dart
+/// // Check availability first
+/// if (await c2pa.isHardwareSigningAvailable()) {
+///   final signer = HardwareSigner(
+///     certificateChainPem: certChain,
+///     keyAlias: 'my-hardware-key',
+///   );
+/// }
+/// ```
+class HardwareSigner extends C2paSigner {
+  /// Hardware signing only supports ES256.
+  @override
+  SigningAlgorithm get algorithm => SigningAlgorithm.es256;
+
+  /// PEM-encoded X.509 certificate chain.
+  final String certificateChainPem;
+
+  /// The alias/tag identifying the key in hardware storage.
+  final String keyAlias;
+
+  /// Whether to require user authentication before signing.
+  /// On iOS, this may trigger Face ID or Touch ID.
+  final bool requireUserAuthentication;
+
+  @override
+  final String? tsaUrl;
+
+  HardwareSigner({
+    required this.certificateChainPem,
+    required this.keyAlias,
+    this.requireUserAuthentication = false,
+    this.tsaUrl,
+  });
+
+  @override
+  Map<String, dynamic> toMap() {
+    return {
+      'type': 'hardware',
+      'algorithm': algorithm.name,
+      'certificateChainPem': certificateChainPem,
+      'keyAlias': keyAlias,
+      'requireUserAuthentication': requireUserAuthentication,
+      'tsaUrl': tsaUrl,
+    };
+  }
+}
+
+/// Remote web service signer.
+///
+/// Delegates signing to a remote service where private keys are managed
+/// server-side. The service must implement the C2PA web service signing
+/// protocol.
+///
+/// ## Example
+///
+/// ```dart
+/// final signer = RemoteSigner(
+///   configurationUrl: 'https://signing.example.com/config',
+///   bearerToken: 'your-auth-token',
+/// );
+/// ```
+///
+/// ## Service Requirements
+///
+/// The remote service must provide:
+/// - A configuration endpoint returning algorithm, certificate chain, and TSA URL
+/// - A signing endpoint that accepts data and returns signatures
+class RemoteSigner extends C2paSigner {
+  /// Algorithm is determined by the remote service configuration.
+  /// This will be set after connecting to the service.
+  @override
+  SigningAlgorithm get algorithm => _algorithm ?? SigningAlgorithm.es256;
+  SigningAlgorithm? _algorithm;
+
+  /// TSA URL is determined by the remote service configuration.
+  @override
+  String? get tsaUrl => _tsaUrl;
+  String? _tsaUrl;
+
+  /// URL to the remote signing service configuration endpoint.
+  final String configurationUrl;
+
+  /// Optional bearer token for authentication.
+  final String? bearerToken;
+
+  /// Optional custom HTTP headers for requests.
+  final Map<String, String>? customHeaders;
+
+  RemoteSigner({
+    required this.configurationUrl,
+    this.bearerToken,
+    this.customHeaders,
+  });
+
+  @override
+  Map<String, dynamic> toMap() {
+    return {
+      'type': 'remote',
+      'configurationUrl': configurationUrl,
+      'bearerToken': bearerToken,
+      'customHeaders': customHeaders,
+    };
   }
 }
 
@@ -832,7 +1098,7 @@ abstract class ManifestBuilder {
   Future<BuilderSignResult> sign({
     required Uint8List sourceData,
     required String mimeType,
-    required SignerInfo signerInfo,
+    required C2paSigner signer,
   });
 
   /// Dispose of native resources
@@ -993,13 +1259,13 @@ class C2pa {
     required Uint8List sourceData,
     required String mimeType,
     required String manifestJson,
-    required SignerInfo signerInfo,
+    required C2paSigner signer,
   }) {
     return C2paPlatform.instance.signBytes(
       sourceData: sourceData,
       mimeType: mimeType,
       manifestJson: manifestJson,
-      signerInfo: signerInfo,
+      signer: signer,
     );
   }
 
@@ -1008,13 +1274,13 @@ class C2pa {
     required String sourcePath,
     required String destPath,
     required String manifestJson,
-    required SignerInfo signerInfo,
+    required C2paSigner signer,
   }) {
     return C2paPlatform.instance.signFile(
       sourcePath: sourcePath,
       destPath: destPath,
       manifestJson: manifestJson,
-      signerInfo: signerInfo,
+      signer: signer,
     );
   }
 
@@ -1057,14 +1323,14 @@ class C2pa {
   /// This is used after createHashedPlaceholder for advanced signing workflows.
   Future<Uint8List> signHashedEmbeddable({
     required ManifestBuilder builder,
-    required SignerInfo signerInfo,
+    required C2paSigner signer,
     required String dataHash,
     required String mimeType,
     Uint8List? assetData,
   }) {
     return C2paPlatform.instance.signHashedEmbeddable(
       builderHandle: builder.handle,
-      signerInfo: signerInfo,
+      signer: signer,
       dataHash: dataHash,
       mimeType: mimeType,
       assetData: assetData,
@@ -1092,8 +1358,63 @@ class C2pa {
   /// Get the reserve size needed for a signer
   ///
   /// This is useful for pre-allocating space in assets for the signature.
-  Future<int> getSignerReserveSize(SignerInfo signerInfo) {
-    return C2paPlatform.instance.getSignerReserveSize(signerInfo);
+  /// Note: Only works with [PemSigner] as other signer types need to connect
+  /// to their backing stores to determine reserve size.
+  Future<int> getSignerReserveSize(C2paSigner signer) {
+    return C2paPlatform.instance.getSignerReserveSize(signer);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Key Management API
+  // ---------------------------------------------------------------------------
+
+  /// Check if hardware-backed signing is available on this device.
+  ///
+  /// Returns true if:
+  /// - Android: StrongBox is available (Android 9.0+ with hardware support)
+  /// - iOS: Secure Enclave is available (iPhone 5s+, not in Simulator)
+  Future<bool> isHardwareSigningAvailable() {
+    return C2paPlatform.instance.isHardwareSigningAvailable();
+  }
+
+  /// Create a new key in the platform's secure storage.
+  ///
+  /// For [KeystoreSigner]: Creates a key in Android Keystore or iOS Keychain.
+  /// For [HardwareSigner]: Creates a key in StrongBox or Secure Enclave.
+  ///
+  /// The [algorithm] parameter is ignored for hardware keys (always ES256).
+  ///
+  /// Throws if the key already exists or cannot be created.
+  Future<void> createKey({
+    required String keyAlias,
+    SigningAlgorithm algorithm = SigningAlgorithm.es256,
+    bool useHardware = false,
+  }) {
+    return C2paPlatform.instance.createKey(
+      keyAlias: keyAlias,
+      algorithm: algorithm,
+      useHardware: useHardware,
+    );
+  }
+
+  /// Delete a key from the platform's secure storage.
+  ///
+  /// Returns true if the key was deleted, false if it didn't exist.
+  Future<bool> deleteKey(String keyAlias) {
+    return C2paPlatform.instance.deleteKey(keyAlias);
+  }
+
+  /// Check if a key exists in the platform's secure storage.
+  Future<bool> keyExists(String keyAlias) {
+    return C2paPlatform.instance.keyExists(keyAlias);
+  }
+
+  /// Export the public key for a stored key as PEM.
+  ///
+  /// This is useful for obtaining the public key to send to a CA for
+  /// certificate enrollment.
+  Future<String> exportPublicKey(String keyAlias) {
+    return C2paPlatform.instance.exportPublicKey(keyAlias);
   }
 
   // ---------------------------------------------------------------------------

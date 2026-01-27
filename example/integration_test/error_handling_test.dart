@@ -82,7 +82,7 @@ void main() {
       final byteData = await rootBundle.load('assets/test_images/test_unsigned.jpg');
       final imageBytes = byteData.buffer.asUint8List();
 
-      final signerInfo = SignerInfo(
+      final signer = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem: 'INVALID_CERTIFICATE',
         privateKeyPem: testKey,
@@ -99,7 +99,7 @@ void main() {
           sourceData: imageBytes,
           mimeType: 'image/jpeg',
           manifestJson: manifest,
-          signerInfo: signerInfo,
+          signer: signer,
         );
         fail('Should have thrown for invalid certificate');
       } catch (e) {
@@ -111,7 +111,7 @@ void main() {
       final byteData = await rootBundle.load('assets/test_images/test_unsigned.jpg');
       final imageBytes = byteData.buffer.asUint8List();
 
-      final signerInfo = SignerInfo(
+      final signer = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem: testCert,
         privateKeyPem: 'INVALID_PRIVATE_KEY',
@@ -128,7 +128,7 @@ void main() {
           sourceData: imageBytes,
           mimeType: 'image/jpeg',
           manifestJson: manifest,
-          signerInfo: signerInfo,
+          signer: signer,
         );
         fail('Should have thrown for invalid private key');
       } catch (e) {
@@ -140,7 +140,7 @@ void main() {
       final byteData = await rootBundle.load('assets/test_images/test_unsigned.jpg');
       final imageBytes = byteData.buffer.asUint8List();
 
-      final signerInfo = SignerInfo(
+      final signer = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem: testCert,
         privateKeyPem: testKey,
@@ -151,7 +151,7 @@ void main() {
           sourceData: imageBytes,
           mimeType: 'image/jpeg',
           manifestJson: 'NOT_VALID_JSON{{{',
-          signerInfo: signerInfo,
+          signer: signer,
         );
         fail('Should have thrown for invalid JSON');
       } catch (e) {
@@ -160,7 +160,7 @@ void main() {
     });
 
     testWidgets('signBytes with empty source data', (tester) async {
-      final signerInfo = SignerInfo(
+      final signer = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem: testCert,
         privateKeyPem: testKey,
@@ -177,7 +177,7 @@ void main() {
           sourceData: Uint8List(0),
           mimeType: 'image/jpeg',
           manifestJson: manifest,
-          signerInfo: signerInfo,
+          signer: signer,
         );
         fail('Should have thrown for empty source data');
       } catch (e) {
@@ -186,7 +186,7 @@ void main() {
     });
 
     testWidgets('signFile with non-existent source', (tester) async {
-      final signerInfo = SignerInfo(
+      final signer = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem: testCert,
         privateKeyPem: testKey,
@@ -203,7 +203,7 @@ void main() {
           sourcePath: '/non/existent/path.jpg',
           destPath: '${tempDir.path}/output.jpg',
           manifestJson: manifest,
-          signerInfo: signerInfo,
+          signer: signer,
         );
         fail('Should have thrown for non-existent file');
       } catch (e) {
@@ -243,7 +243,7 @@ void main() {
 
       final builder = await c2pa.createBuilder(manifest);
 
-      final invalidSignerInfo = SignerInfo(
+      final invalidSigner = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem: 'INVALID',
         privateKeyPem: 'INVALID',
@@ -253,7 +253,7 @@ void main() {
         await builder.sign(
           sourceData: imageBytes,
           mimeType: 'image/jpeg',
-          signerInfo: invalidSignerInfo,
+          signer: invalidSigner,
         );
         fail('Should have thrown for invalid signer');
       } catch (e) {
@@ -293,7 +293,7 @@ void main() {
         'assertions': [],
       });
 
-      final signerInfo = SignerInfo(
+      final signer = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem: testCert,
         privateKeyPem: testKey,
@@ -304,7 +304,7 @@ void main() {
         sourceData: imageBytes,
         mimeType: 'image/jpeg',
         manifestJson: manifest,
-        signerInfo: signerInfo,
+        signer: signer,
       );
 
       expect(result.signedData.isNotEmpty, true);
@@ -330,7 +330,7 @@ void main() {
         ],
       });
 
-      final signerInfo = SignerInfo(
+      final signer = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem: testCert,
         privateKeyPem: testKey,
@@ -340,7 +340,7 @@ void main() {
         sourceData: imageBytes,
         mimeType: 'image/jpeg',
         manifestJson: manifest,
-        signerInfo: signerInfo,
+        signer: signer,
       );
 
       expect(result.signedData.isNotEmpty, true);
@@ -366,7 +366,7 @@ void main() {
         ],
       });
 
-      final signerInfo = SignerInfo(
+      final signer = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem: testCert,
         privateKeyPem: testKey,
@@ -376,7 +376,7 @@ void main() {
         sourceData: imageBytes,
         mimeType: 'image/jpeg',
         manifestJson: manifest,
-        signerInfo: signerInfo,
+        signer: signer,
       );
 
       expect(result.signedData.isNotEmpty, true);
@@ -384,16 +384,17 @@ void main() {
   });
 
   group('Data Class Edge Cases', () {
-    testWidgets('SignerInfo fromMap with unknown algorithm', (tester) async {
+    testWidgets('PemSigner fromMap with unknown algorithm', (tester) async {
       final map = {
+        'type': 'pem',
         'algorithm': 'unknown_algorithm',
         'certificatePem': testCert,
         'privateKeyPem': testKey,
       };
 
-      final signerInfo = SignerInfo.fromMap(map);
+      final signer = PemSigner.fromMap(map);
       // Should fall back to es256
-      expect(signerInfo.algorithm, SigningAlgorithm.es256);
+      expect(signer.algorithm, SigningAlgorithm.es256);
     });
 
     testWidgets('ValidationError fromMap with missing fields', (tester) async {
