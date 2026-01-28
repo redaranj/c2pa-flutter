@@ -49,11 +49,11 @@
 /// // Configure the manifest
 /// builder.setIntent(ManifestIntent.create, DigitalSourceType.digitalCapture);
 ///
-/// // Sign the content
+/// // Sign the content with a PEM signer
 /// final result = await builder.sign(
 ///   sourceData: imageBytes,
 ///   mimeType: 'image/jpeg',
-///   signerInfo: SignerInfo(
+///   signer: PemSigner(
 ///     algorithm: SigningAlgorithm.es256,
 ///     certificatePem: certificatePem,
 ///     privateKeyPem: privateKeyPem,
@@ -64,12 +64,22 @@
 /// builder.dispose();
 /// ```
 ///
+/// ## Signer Types
+///
+/// Multiple signer types are available for different use cases:
+///
+/// - [PemSigner] - Direct signing with PEM certificate and private key
+/// - [CallbackSigner] - Custom callback-based signing (HSM, smart cards)
+/// - [KeystoreSigner] - Android Keystore / iOS Keychain
+/// - [HardwareSigner] - StrongBox (Android) / Secure Enclave (iOS)
+/// - [RemoteSigner] - Remote web service signing
+///
 /// ## Key Classes
 ///
 /// - [C2pa] - Main entry point for all C2PA operations
 /// - [ManifestBuilder] - Builder pattern for creating manifests
 /// - [ManifestStoreInfo] - Parsed manifest data with validation info
-/// - [SignerInfo] - Configuration for signing operations
+/// - [C2paSigner] - Base class for all signer types
 /// - [SigningAlgorithm] - Supported cryptographic algorithms
 ///
 /// ## See Also
@@ -82,6 +92,10 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'c2pa_platform_interface.dart';
+import 'src/manifest_types.dart';
+
+// Export manifest types
+export 'src/manifest_types.dart';
 
 // =============================================================================
 // Enums
@@ -109,51 +123,49 @@ enum ManifestIntent {
   update,
 }
 
-/// Digital source types as defined by C2PA/IPTC
-enum DigitalSourceType {
-  empty,
-  trainedAlgorithmicData,
-  digitalCapture,
-  computationalCapture,
-  negativeFilm,
-  positiveFilm,
-  print,
-  humanEdits,
-  compositeWithTrainedAlgorithmicMedia,
-  algorithmicallyEnhanced,
-  digitalCreation,
-  dataDrivenMedia,
-  trainedAlgorithmicMedia,
-  algorithmicMedia,
-  screenCapture,
-  virtualRecording,
-  composite,
-  compositeCapture,
-  compositeSynthetic,
-}
-
 /// Validation status for manifest verification
 enum ValidationStatus { valid, invalid, unknown }
-
-/// Relationship type for ingredients
-enum IngredientRelationship { parentOf, componentOf }
 
 // =============================================================================
 // Core Data Classes
 // =============================================================================
 
-/// Configuration for signing operations.
+// =============================================================================
+// Signer Types
+// =============================================================================
+
+/// Base sealed class for all C2PA signer types.
 ///
-/// Provides the cryptographic credentials needed to sign C2PA manifests.
+/// Use one of the concrete implementations:
+/// - [PemSigner] - Direct signing with PEM certificate and private key
+/// - [CallbackSigner] - Custom callback-based signing
+/// - [KeystoreSigner] - Android Keystore / iOS Keychain signing
+/// - [HardwareSigner] - Hardware-backed signing (StrongBox/Secure Enclave)
+/// - [RemoteSigner] - Remote web service signing
+sealed class C2paSigner {
+  /// The signing algorithm to use.
+  SigningAlgorithm get algorithm;
+
+  /// Optional RFC 3161 Time Stamp Authority URL for trusted timestamps.
+  String? get tsaUrl;
+
+  /// Convert to a map for platform channel serialization.
+  Map<String, dynamic> toMap();
+}
+
+/// PEM certificate + private key signer.
+///
+/// This is the most common signer type where you have direct access to
+/// the certificate chain and private key in PEM format.
 ///
 /// ## Example
 ///
 /// ```dart
-/// final signerInfo = SignerInfo(
+/// final signer = PemSigner(
 ///   algorithm: SigningAlgorithm.es256,
 ///   certificatePem: await File('cert.pem').readAsString(),
 ///   privateKeyPem: await File('key.pem').readAsString(),
-///   tsaUrl: 'http://timestamp.digicert.com', // Optional
+///   tsaUrl: 'http://timestamp.digicert.com',
 /// );
 /// ```
 ///
@@ -162,8 +174,8 @@ enum IngredientRelationship { parentOf, componentOf }
 /// - ECDSA: [SigningAlgorithm.es256], [SigningAlgorithm.es384], [SigningAlgorithm.es512]
 /// - RSA-PSS: [SigningAlgorithm.ps256], [SigningAlgorithm.ps384], [SigningAlgorithm.ps512]
 /// - EdDSA: [SigningAlgorithm.ed25519]
-class SignerInfo {
-  /// The signing algorithm to use.
+class PemSigner extends C2paSigner {
+  @override
   final SigningAlgorithm algorithm;
 
   /// PEM-encoded X.509 certificate chain.
@@ -172,18 +184,20 @@ class SignerInfo {
   /// PEM-encoded private key (must match the certificate's public key).
   final String privateKeyPem;
 
-  /// Optional RFC 3161 Time Stamp Authority URL for trusted timestamps.
+  @override
   final String? tsaUrl;
 
-  SignerInfo({
+  PemSigner({
     required this.algorithm,
     required this.certificatePem,
     required this.privateKeyPem,
     this.tsaUrl,
   });
 
+  @override
   Map<String, dynamic> toMap() {
     return {
+      'type': 'pem',
       'algorithm': algorithm.name,
       'certificatePem': certificatePem,
       'privateKeyPem': privateKeyPem,
@@ -191,8 +205,8 @@ class SignerInfo {
     };
   }
 
-  factory SignerInfo.fromMap(Map<String, dynamic> map) {
-    return SignerInfo(
+  factory PemSigner.fromMap(Map<String, dynamic> map) {
+    return PemSigner(
       algorithm: SigningAlgorithm.values.firstWhere(
         (e) => e.name == map['algorithm'],
         orElse: () => SigningAlgorithm.es256,
@@ -201,6 +215,236 @@ class SignerInfo {
       privateKeyPem: map['privateKeyPem'] as String,
       tsaUrl: map['tsaUrl'] as String?,
     );
+  }
+}
+
+/// Custom callback-based signer.
+///
+/// Use this when you need to implement custom signing logic, such as
+/// integrating with a custom HSM, smart card, or other signing service.
+///
+/// ## Example
+///
+/// ```dart
+/// final signer = CallbackSigner(
+///   algorithm: SigningAlgorithm.es256,
+///   certificateChainPem: certChain,
+///   signCallback: (data) async {
+///     // Your custom signing logic here
+///     return await myHsm.sign(data);
+///   },
+/// );
+/// ```
+class CallbackSigner extends C2paSigner {
+  @override
+  final SigningAlgorithm algorithm;
+
+  /// PEM-encoded X.509 certificate chain.
+  final String certificateChainPem;
+
+  /// Callback function that performs the actual signing.
+  /// Receives the data to sign and returns the signature bytes.
+  final Future<Uint8List> Function(Uint8List data) signCallback;
+
+  @override
+  final String? tsaUrl;
+
+  CallbackSigner({
+    required this.algorithm,
+    required this.certificateChainPem,
+    required this.signCallback,
+    this.tsaUrl,
+  });
+
+  @override
+  Map<String, dynamic> toMap() {
+    return {
+      'type': 'callback',
+      'algorithm': algorithm.name,
+      'certificateChainPem': certificateChainPem,
+      'tsaUrl': tsaUrl,
+    };
+  }
+}
+
+/// Android Keystore / iOS Keychain signer.
+///
+/// Signs using a key stored in the platform's secure key storage:
+/// - Android: Android Keystore
+/// - iOS: iOS Keychain
+///
+/// The key must already exist in the keystore/keychain before creating
+/// the signer. Use [C2pa.createKeystoreKey] to generate a new key.
+///
+/// ## Example
+///
+/// ```dart
+/// final signer = KeystoreSigner(
+///   algorithm: SigningAlgorithm.es256,
+///   certificateChainPem: certChain,
+///   keyAlias: 'my-signing-key',
+///   requireUserAuthentication: true, // Requires biometric on Android
+/// );
+/// ```
+///
+/// ## Platform Notes
+///
+/// - Ed25519 is not supported on either platform for keystore signing
+/// - On Android with [requireUserAuthentication], a biometric prompt is shown
+class KeystoreSigner extends C2paSigner {
+  @override
+  final SigningAlgorithm algorithm;
+
+  /// PEM-encoded X.509 certificate chain.
+  final String certificateChainPem;
+
+  /// The alias/tag identifying the key in the keystore/keychain.
+  final String keyAlias;
+
+  /// Whether to require user authentication (biometric) before signing.
+  /// On Android, this shows a biometric prompt.
+  final bool requireUserAuthentication;
+
+  @override
+  final String? tsaUrl;
+
+  KeystoreSigner({
+    required this.algorithm,
+    required this.certificateChainPem,
+    required this.keyAlias,
+    this.requireUserAuthentication = false,
+    this.tsaUrl,
+  });
+
+  @override
+  Map<String, dynamic> toMap() {
+    return {
+      'type': 'keystore',
+      'algorithm': algorithm.name,
+      'certificateChainPem': certificateChainPem,
+      'keyAlias': keyAlias,
+      'requireUserAuthentication': requireUserAuthentication,
+      'tsaUrl': tsaUrl,
+    };
+  }
+}
+
+/// Hardware-backed signer (StrongBox on Android, Secure Enclave on iOS).
+///
+/// Provides the highest level of key protection using dedicated hardware:
+/// - Android: StrongBox (requires Android 9.0+ and device support)
+/// - iOS: Secure Enclave (requires iPhone 5s or later, not available in Simulator)
+///
+/// ## Important Limitations
+///
+/// - Only ES256 algorithm is supported on both platforms
+/// - Keys cannot be exported from the hardware
+/// - The key must already exist or will be created automatically
+///
+/// ## Example
+///
+/// ```dart
+/// // Check availability first
+/// if (await c2pa.isHardwareSigningAvailable()) {
+///   final signer = HardwareSigner(
+///     certificateChainPem: certChain,
+///     keyAlias: 'my-hardware-key',
+///   );
+/// }
+/// ```
+class HardwareSigner extends C2paSigner {
+  /// Hardware signing only supports ES256.
+  @override
+  SigningAlgorithm get algorithm => SigningAlgorithm.es256;
+
+  /// PEM-encoded X.509 certificate chain.
+  final String certificateChainPem;
+
+  /// The alias/tag identifying the key in hardware storage.
+  final String keyAlias;
+
+  /// Whether to require user authentication before signing.
+  /// On iOS, this may trigger Face ID or Touch ID.
+  final bool requireUserAuthentication;
+
+  @override
+  final String? tsaUrl;
+
+  HardwareSigner({
+    required this.certificateChainPem,
+    required this.keyAlias,
+    this.requireUserAuthentication = false,
+    this.tsaUrl,
+  });
+
+  @override
+  Map<String, dynamic> toMap() {
+    return {
+      'type': 'hardware',
+      'algorithm': algorithm.name,
+      'certificateChainPem': certificateChainPem,
+      'keyAlias': keyAlias,
+      'requireUserAuthentication': requireUserAuthentication,
+      'tsaUrl': tsaUrl,
+    };
+  }
+}
+
+/// Remote web service signer.
+///
+/// Delegates signing to a remote service where private keys are managed
+/// server-side. The service must implement the C2PA web service signing
+/// protocol.
+///
+/// ## Example
+///
+/// ```dart
+/// final signer = RemoteSigner(
+///   configurationUrl: 'https://signing.example.com/config',
+///   bearerToken: 'your-auth-token',
+/// );
+/// ```
+///
+/// ## Service Requirements
+///
+/// The remote service must provide:
+/// - A configuration endpoint returning algorithm, certificate chain, and TSA URL
+/// - A signing endpoint that accepts data and returns signatures
+class RemoteSigner extends C2paSigner {
+  /// Algorithm is determined by the remote service configuration.
+  /// This will be set after connecting to the service.
+  @override
+  SigningAlgorithm get algorithm => _algorithm ?? SigningAlgorithm.es256;
+  SigningAlgorithm? _algorithm;
+
+  /// TSA URL is determined by the remote service configuration.
+  @override
+  String? get tsaUrl => _tsaUrl;
+  String? _tsaUrl;
+
+  /// URL to the remote signing service configuration endpoint.
+  final String configurationUrl;
+
+  /// Optional bearer token for authentication.
+  final String? bearerToken;
+
+  /// Optional custom HTTP headers for requests.
+  final Map<String, String>? customHeaders;
+
+  RemoteSigner({
+    required this.configurationUrl,
+    this.bearerToken,
+    this.customHeaders,
+  });
+
+  @override
+  Map<String, dynamic> toMap() {
+    return {
+      'type': 'remote',
+      'configurationUrl': configurationUrl,
+      'bearerToken': bearerToken,
+      'customHeaders': customHeaders,
+    };
   }
 }
 
@@ -350,7 +594,7 @@ class IngredientInfo {
   final String? documentId;
 
   /// Relationship to parent manifest
-  final IngredientRelationship relationship;
+  final Relationship relationship;
 
   /// Thumbnail URI if present
   final String? thumbnailUri;
@@ -374,11 +618,13 @@ class IngredientInfo {
 
   factory IngredientInfo.fromMap(Map<String, dynamic> map) {
     final relationshipStr = map['relationship'] as String?;
-    IngredientRelationship relationship;
+    Relationship relationship;
     if (relationshipStr == 'parentOf') {
-      relationship = IngredientRelationship.parentOf;
+      relationship = Relationship.parentOf;
+    } else if (relationshipStr == 'inputTo') {
+      relationship = Relationship.inputTo;
     } else {
-      relationship = IngredientRelationship.componentOf;
+      relationship = Relationship.componentOf;
     }
 
     return IngredientInfo(
@@ -542,8 +788,11 @@ class ManifestStoreInfo {
 // Builder Data Classes
 // =============================================================================
 
-/// Reference to a resource (thumbnail, icon, etc.)
-class ResourceRef {
+/// Resource data for adding to a builder (thumbnail, icon, etc.)
+///
+/// This differs from [ResourceRef] in manifest_types.dart which is used
+/// for references within the manifest JSON structure.
+class BuilderResource {
   /// URI identifier for the resource
   final String uri;
 
@@ -553,40 +802,36 @@ class ResourceRef {
   /// Optional MIME type
   final String? mimeType;
 
-  ResourceRef({required this.uri, required this.data, this.mimeType});
+  BuilderResource({required this.uri, required this.data, this.mimeType});
 
   Map<String, dynamic> toMap() {
     return {'uri': uri, 'data': data, 'mimeType': mimeType};
   }
 }
 
-/// Configuration for adding an ingredient
+/// Configuration for adding an ingredient to a builder
 class IngredientConfig {
   /// Title of the ingredient
   final String? title;
 
   /// Relationship to the manifest
-  final IngredientRelationship relationship;
+  final Relationship relationship;
 
   /// Optional thumbnail
-  final ResourceRef? thumbnail;
+  final BuilderResource? thumbnail;
 
   /// Additional JSON data for the ingredient
   final Map<String, dynamic>? additionalData;
 
   IngredientConfig({
     this.title,
-    this.relationship = IngredientRelationship.componentOf,
+    this.relationship = Relationship.componentOf,
     this.thumbnail,
     this.additionalData,
   });
 
   Map<String, dynamic> toMap() {
-    final map = <String, dynamic>{
-      'relationship': relationship == IngredientRelationship.parentOf
-          ? 'parentOf'
-          : 'componentOf',
-    };
+    final map = <String, dynamic>{'relationship': relationship.toJson()};
     if (title != null) map['title'] = title;
     if (additionalData != null) map.addAll(additionalData!);
     return map;
@@ -595,7 +840,7 @@ class IngredientConfig {
   String toJson() => jsonEncode(toMap());
 }
 
-/// Configuration for adding an action
+/// Configuration for adding an action to a builder
 class ActionConfig {
   /// The action identifier (e.g., "c2pa.created", "c2pa.edited")
   final String action;
@@ -625,57 +870,13 @@ class ActionConfig {
     if (when != null) map['when'] = when!.toIso8601String();
     if (softwareAgent != null) map['softwareAgent'] = softwareAgent;
     if (digitalSourceType != null) {
-      map['digitalSourceType'] = _digitalSourceTypeToUrl(digitalSourceType!);
+      map['digitalSourceType'] = digitalSourceType!.url;
     }
     if (parameters != null) map['parameters'] = parameters;
     return map;
   }
 
   String toJson() => jsonEncode(toMap());
-
-  static String _digitalSourceTypeToUrl(DigitalSourceType type) {
-    const baseUrl = 'http://cv.iptc.org/newscodes/digitalsourcetype/';
-    switch (type) {
-      case DigitalSourceType.empty:
-        return 'http://c2pa.org/digitalsourcetype/empty';
-      case DigitalSourceType.trainedAlgorithmicData:
-        return '${baseUrl}trainedAlgorithmicData';
-      case DigitalSourceType.digitalCapture:
-        return '${baseUrl}digitalCapture';
-      case DigitalSourceType.computationalCapture:
-        return '${baseUrl}computationalCapture';
-      case DigitalSourceType.negativeFilm:
-        return '${baseUrl}negativeFilm';
-      case DigitalSourceType.positiveFilm:
-        return '${baseUrl}positiveFilm';
-      case DigitalSourceType.print:
-        return '${baseUrl}print';
-      case DigitalSourceType.humanEdits:
-        return '${baseUrl}humanEdits';
-      case DigitalSourceType.compositeWithTrainedAlgorithmicMedia:
-        return '${baseUrl}compositeWithTrainedAlgorithmicMedia';
-      case DigitalSourceType.algorithmicallyEnhanced:
-        return '${baseUrl}algorithmicallyEnhanced';
-      case DigitalSourceType.digitalCreation:
-        return '${baseUrl}digitalCreation';
-      case DigitalSourceType.dataDrivenMedia:
-        return '${baseUrl}dataDrivenMedia';
-      case DigitalSourceType.trainedAlgorithmicMedia:
-        return '${baseUrl}trainedAlgorithmicMedia';
-      case DigitalSourceType.algorithmicMedia:
-        return '${baseUrl}algorithmicMedia';
-      case DigitalSourceType.screenCapture:
-        return '${baseUrl}screenCapture';
-      case DigitalSourceType.virtualRecording:
-        return '${baseUrl}virtualRecording';
-      case DigitalSourceType.composite:
-        return '${baseUrl}composite';
-      case DigitalSourceType.compositeCapture:
-        return '${baseUrl}compositeCapture';
-      case DigitalSourceType.compositeSynthetic:
-        return '${baseUrl}compositeSynthetic';
-    }
-  }
 }
 
 /// Options for building manifests
@@ -702,7 +903,7 @@ class BuilderOptions {
   Map<String, dynamic> toMap() {
     return {
       'intent': intent?.name,
-      'digitalSourceType': digitalSourceType?.name,
+      'digitalSourceType': digitalSourceType?.url,
       'embed': embed,
       'remoteUrl': remoteUrl,
     };
@@ -747,17 +948,30 @@ class BuilderArchive {
 ///
 /// ## Basic Usage
 ///
+/// The manifest JSON passed to [C2pa.createBuilder] should contain the title,
+/// claim_generator, and any assertions. These cannot be modified after builder
+/// creation as the native C2PA libraries don't support dynamic modification.
+///
 /// ```dart
-/// final builder = await c2pa.createBuilder('{"title": "My Photo"}');
+/// final manifestJson = jsonEncode({
+///   'title': 'My Photo',
+///   'claim_generator': 'MyApp/1.0',
+///   'assertions': [
+///     {
+///       'label': 'c2pa.actions',
+///       'data': {
+///         'actions': [
+///           {'action': 'c2pa.created', 'digitalSourceType': '...'}
+///         ]
+///       }
+///     }
+///   ]
+/// });
+///
+/// final builder = await c2pa.createBuilder(manifestJson);
 ///
 /// // Set the intent (required)
 /// builder.setIntent(ManifestIntent.create, DigitalSourceType.digitalCapture);
-///
-/// // Optional: Add actions
-/// builder.addAction(ActionConfig(
-///   action: 'c2pa.created',
-///   softwareAgent: 'MyApp/1.0',
-/// ));
 ///
 /// // Sign and get result
 /// final result = await builder.sign(
@@ -779,7 +993,7 @@ class BuilderArchive {
 /// await builder.addIngredient(
 ///   data: parentImageBytes,
 ///   mimeType: 'image/jpeg',
-///   config: IngredientConfig(relationship: IngredientRelationship.parentOf),
+///   config: IngredientConfig(relationship: Relationship.parentOf),
 /// );
 /// ```
 ///
@@ -793,12 +1007,6 @@ abstract class ManifestBuilder {
   /// Set the builder intent
   void setIntent(ManifestIntent intent, [DigitalSourceType? digitalSourceType]);
 
-  /// Set the manifest title
-  void setTitle(String title);
-
-  /// Set the claim generator
-  void setClaimGenerator(String generator);
-
   /// Disable embedding the manifest in the asset
   void setNoEmbed();
 
@@ -806,7 +1014,7 @@ abstract class ManifestBuilder {
   void setRemoteUrl(String url);
 
   /// Add a resource (thumbnail, icon, etc.)
-  Future<void> addResource(ResourceRef resource);
+  Future<void> addResource(BuilderResource resource);
 
   /// Add an ingredient from data
   Future<void> addIngredient({
@@ -815,17 +1023,8 @@ abstract class ManifestBuilder {
     IngredientConfig? config,
   });
 
-  /// Add an ingredient from a file path
-  Future<void> addIngredientFromFile({
-    required String path,
-    IngredientConfig? config,
-  });
-
   /// Add an action to the manifest
   void addAction(ActionConfig action);
-
-  /// Add a custom assertion
-  void addAssertion(String label, Map<String, dynamic> data);
 
   /// Export the builder to an archive for later use
   Future<BuilderArchive> toArchive();
@@ -834,14 +1033,7 @@ abstract class ManifestBuilder {
   Future<BuilderSignResult> sign({
     required Uint8List sourceData,
     required String mimeType,
-    required SignerInfo signerInfo,
-  });
-
-  /// Sign the manifest and write to a file
-  Future<void> signFile({
-    required String sourcePath,
-    required String destPath,
-    required SignerInfo signerInfo,
+    required C2paSigner signer,
   });
 
   /// Dispose of native resources
@@ -1002,13 +1194,13 @@ class C2pa {
     required Uint8List sourceData,
     required String mimeType,
     required String manifestJson,
-    required SignerInfo signerInfo,
+    required C2paSigner signer,
   }) {
     return C2paPlatform.instance.signBytes(
       sourceData: sourceData,
       mimeType: mimeType,
       manifestJson: manifestJson,
-      signerInfo: signerInfo,
+      signer: signer,
     );
   }
 
@@ -1017,13 +1209,13 @@ class C2pa {
     required String sourcePath,
     required String destPath,
     required String manifestJson,
-    required SignerInfo signerInfo,
+    required C2paSigner signer,
   }) {
     return C2paPlatform.instance.signFile(
       sourcePath: sourcePath,
       destPath: destPath,
       manifestJson: manifestJson,
-      signerInfo: signerInfo,
+      signer: signer,
     );
   }
 
@@ -1066,14 +1258,14 @@ class C2pa {
   /// This is used after createHashedPlaceholder for advanced signing workflows.
   Future<Uint8List> signHashedEmbeddable({
     required ManifestBuilder builder,
-    required SignerInfo signerInfo,
+    required C2paSigner signer,
     required String dataHash,
     required String mimeType,
     Uint8List? assetData,
   }) {
     return C2paPlatform.instance.signHashedEmbeddable(
       builderHandle: builder.handle,
-      signerInfo: signerInfo,
+      signer: signer,
       dataHash: dataHash,
       mimeType: mimeType,
       assetData: assetData,
@@ -1084,6 +1276,10 @@ class C2pa {
   ///
   /// A raw manifest (application/c2pa format) cannot be embedded directly.
   /// This converts it to an embeddable format for the specified MIME type.
+  ///
+  /// **Android note**: This method returns the input unchanged on Android as
+  /// the native library does not support this operation. The manifest bytes
+  /// from [signHashedEmbeddable] are already in the correct format on Android.
   Future<Uint8List> formatEmbeddable({
     required String mimeType,
     required Uint8List manifestBytes,
@@ -1097,8 +1293,132 @@ class C2pa {
   /// Get the reserve size needed for a signer
   ///
   /// This is useful for pre-allocating space in assets for the signature.
-  Future<int> getSignerReserveSize(SignerInfo signerInfo) {
-    return C2paPlatform.instance.getSignerReserveSize(signerInfo);
+  /// Note: Only works with [PemSigner] as other signer types need to connect
+  /// to their backing stores to determine reserve size.
+  Future<int> getSignerReserveSize(C2paSigner signer) {
+    return C2paPlatform.instance.getSignerReserveSize(signer);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Key Management API
+  // ---------------------------------------------------------------------------
+
+  /// Check if hardware-backed signing is available on this device.
+  ///
+  /// Returns true if:
+  /// - Android: StrongBox is available (Android 9.0+ with hardware support)
+  /// - iOS: Secure Enclave is available (iPhone 5s+, not in Simulator)
+  Future<bool> isHardwareSigningAvailable() {
+    return C2paPlatform.instance.isHardwareSigningAvailable();
+  }
+
+  /// Create a new key in the platform's secure storage.
+  ///
+  /// For [KeystoreSigner]: Creates a key in Android Keystore or iOS Keychain.
+  /// For [HardwareSigner]: Creates a key in StrongBox or Secure Enclave.
+  ///
+  /// The [algorithm] parameter is ignored for hardware keys (always ES256).
+  ///
+  /// Throws if the key already exists or cannot be created.
+  Future<void> createKey({
+    required String keyAlias,
+    SigningAlgorithm algorithm = SigningAlgorithm.es256,
+    bool useHardware = false,
+  }) {
+    return C2paPlatform.instance.createKey(
+      keyAlias: keyAlias,
+      algorithm: algorithm,
+      useHardware: useHardware,
+    );
+  }
+
+  /// Delete a key from the platform's secure storage.
+  ///
+  /// Returns true if the key was deleted, false if it didn't exist.
+  Future<bool> deleteKey(String keyAlias) {
+    return C2paPlatform.instance.deleteKey(keyAlias);
+  }
+
+  /// Check if a key exists in the platform's secure storage.
+  Future<bool> keyExists(String keyAlias) {
+    return C2paPlatform.instance.keyExists(keyAlias);
+  }
+
+  /// Export the public key for a stored key as PEM.
+  ///
+  /// This is useful for obtaining the public key to send to a CA for
+  /// certificate enrollment.
+  Future<String> exportPublicKey(String keyAlias) {
+    return C2paPlatform.instance.exportPublicKey(keyAlias);
+  }
+
+  /// Import a private key and certificate chain into the platform's keystore.
+  ///
+  /// This allows using externally generated keys (e.g., test certificates)
+  /// with the Keystore signer. The private key must be in PKCS#8 PEM format.
+  ///
+  /// Note: On Android, this imports into AndroidKeyStore. The key will not
+  /// have hardware protection even if StrongBox is available.
+  Future<void> importKey({
+    required String keyAlias,
+    required String privateKeyPem,
+    required String certificateChainPem,
+  }) {
+    return C2paPlatform.instance.importKey(
+      keyAlias: keyAlias,
+      privateKeyPem: privateKeyPem,
+      certificateChainPem: certificateChainPem,
+    );
+  }
+
+  /// Create a Certificate Signing Request (CSR) for a hardware-backed key.
+  ///
+  /// The key must already exist in the platform keystore (created via [createKey]).
+  /// Returns a PEM-encoded CSR that can be submitted to a signing server.
+  Future<String> createCSR({
+    required String keyAlias,
+    required String commonName,
+    String? organization,
+    String? organizationalUnit,
+    String? country,
+    String? state,
+    String? locality,
+  }) {
+    return C2paPlatform.instance.createCSR(
+      keyAlias: keyAlias,
+      commonName: commonName,
+      organization: organization,
+      organizationalUnit: organizationalUnit,
+      country: country,
+      state: state,
+      locality: locality,
+    );
+  }
+
+  /// Enroll a hardware-backed key with a signing server.
+  ///
+  /// This creates a hardware key (if it doesn't exist), generates a CSR,
+  /// submits it to the signing server, and returns the certificate chain.
+  ///
+  /// Returns a map containing:
+  /// - `certificateChain`: The PEM-encoded certificate chain from the server
+  /// - `keyAlias`: The key alias used
+  Future<Map<String, dynamic>> enrollHardwareKey({
+    required String keyAlias,
+    required String signingServerUrl,
+    String? bearerToken,
+    String? commonName,
+    String? organization,
+    bool useStrongBox = false,
+  }) {
+    return C2paPlatform.instance.enrollHardwareKey(
+      keyAlias: keyAlias,
+      signingServerUrl: signingServerUrl,
+      bearerToken: bearerToken,
+      commonName: commonName,
+      organization: organization,
+      useStrongBox: useStrongBox,
+    );
   }
 
   // ---------------------------------------------------------------------------

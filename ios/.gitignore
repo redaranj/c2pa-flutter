@@ -4,6 +4,16 @@
 .svn/
 
 .DS_Store
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# CocoaPods (not used, but ignore if accidentally created)
+Pods/
+Podfile.lock
+*.xcworkspace
 *.swp
 profile
 

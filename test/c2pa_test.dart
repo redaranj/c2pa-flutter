@@ -137,11 +137,11 @@ void main() {
   });
 
   group('Signer API', () {
-    late SignerInfo signerInfo;
+    late PemSigner signer;
     late Uint8List testData;
 
     setUp(() {
-      signerInfo = SignerInfo(
+      signer = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem:
             '-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----',
@@ -156,7 +156,7 @@ void main() {
         sourceData: testData,
         mimeType: 'image/jpeg',
         manifestJson: '{"title": "Test"}',
-        signerInfo: signerInfo,
+        signer: signer,
       );
 
       expect(result.signedData, isNotNull);
@@ -165,7 +165,7 @@ void main() {
     });
 
     test('signBytes with TSA URL', () async {
-      final signerWithTsa = SignerInfo(
+      final signerWithTsa = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem:
             '-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----',
@@ -178,7 +178,7 @@ void main() {
         sourceData: testData,
         mimeType: 'image/jpeg',
         manifestJson: '{"title": "Test"}',
-        signerInfo: signerWithTsa,
+        signer: signerWithTsa,
       );
 
       expect(result.signedData, isNotNull);
@@ -189,7 +189,7 @@ void main() {
         sourcePath: '/input.jpg',
         destPath: '/output.jpg',
         manifestJson: '{"title": "Test"}',
-        signerInfo: signerInfo,
+        signer: signer,
       );
 
       expect(mockPlatform.methodCalls.last.method, 'signFile');
@@ -205,7 +205,7 @@ void main() {
 
     test('all signing algorithms are supported', () async {
       for (final algorithm in SigningAlgorithm.values) {
-        final info = SignerInfo(
+        final pemSigner = PemSigner(
           algorithm: algorithm,
           certificatePem:
               '-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----',
@@ -217,7 +217,7 @@ void main() {
           sourceData: testData,
           mimeType: 'image/jpeg',
           manifestJson: '{"title": "Test ${algorithm.name}"}',
-          signerInfo: info,
+          signer: pemSigner,
         );
 
         expect(
@@ -230,11 +230,11 @@ void main() {
   });
 
   group('Builder API', () {
-    late SignerInfo signerInfo;
+    late PemSigner signer;
     late Uint8List testData;
 
     setUp(() {
-      signerInfo = SignerInfo(
+      signer = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem:
             '-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----',
@@ -249,6 +249,127 @@ void main() {
       expect(builder, isNotNull);
       expect(builder.handle, greaterThan(0));
       expect(mockPlatform.methodCalls.last.method, 'createBuilder');
+    });
+
+    test('createBuilder with ManifestDefinition.created', () async {
+      final manifest = ManifestDefinition.created(
+        title: 'Digital Photo',
+        claimGenerator: ClaimGeneratorInfo(name: 'TestApp', version: '1.0.0'),
+        sourceType: DigitalSourceType.digitalCapture,
+      );
+
+      final builder = await c2pa.createBuilder(manifest.toJsonString());
+      expect(builder, isNotNull);
+
+      final call = mockPlatform.methodCalls.last;
+      expect(call.method, 'createBuilder');
+      expect(call.arguments!['manifestJson'], contains('Digital Photo'));
+      expect(call.arguments!['manifestJson'], contains('TestApp/1.0.0'));
+      expect(call.arguments!['manifestJson'], contains('c2pa.created'));
+    });
+
+    test('createBuilder with ManifestDefinition.edited', () async {
+      final manifest = ManifestDefinition.edited(
+        title: 'Edited Photo',
+        claimGenerator: ClaimGeneratorInfo(name: 'PhotoEditor', version: '2.0'),
+        actions: [
+          Action.cropped(softwareAgent: 'PhotoEditor/2.0'),
+          Action.filtered(
+            softwareAgent: 'PhotoEditor/2.0',
+            parameters: {'filter': 'brightness'},
+          ),
+        ],
+      );
+
+      final builder = await c2pa.createBuilder(manifest.toJsonString());
+      expect(builder, isNotNull);
+
+      final call = mockPlatform.methodCalls.last;
+      expect(call.arguments!['manifestJson'], contains('Edited Photo'));
+      expect(call.arguments!['manifestJson'], contains('c2pa.cropped'));
+      expect(call.arguments!['manifestJson'], contains('c2pa.filtered'));
+    });
+
+    test('createBuilder with ManifestDefinition.aiGenerated', () async {
+      final manifest = ManifestDefinition.aiGenerated(
+        title: 'AI Generated Image',
+        claimGenerator: ClaimGeneratorInfo(name: 'AI Art', version: '1.0'),
+        sourceType: DigitalSourceType.trainedAlgorithmicMedia,
+        parameters: {'model': 'test-model', 'prompt': 'landscape'},
+        trainingMining: TrainingMiningAssertion(
+          entries: [
+            TrainingMiningEntry.aiTraining(
+              permission: TrainingMiningPermission.notAllowed,
+            ),
+            TrainingMiningEntry.dataMining(
+              permission: TrainingMiningPermission.constrained,
+              constraintInfo: 'Research only',
+            ),
+          ],
+        ),
+      );
+
+      final builder = await c2pa.createBuilder(manifest.toJsonString());
+      expect(builder, isNotNull);
+
+      final call = mockPlatform.methodCalls.last;
+      expect(call.arguments!['manifestJson'], contains('AI Generated Image'));
+      expect(call.arguments!['manifestJson'], contains('c2pa.ai_generated'));
+      expect(
+        call.arguments!['manifestJson'],
+        contains('trainedAlgorithmicMedia'),
+      );
+      expect(call.arguments!['manifestJson'], contains('c2pa.training-mining'));
+    });
+
+    test('createBuilder with full ManifestDefinition', () async {
+      final manifest = ManifestDefinition(
+        title: 'Complete Manifest Test',
+        claimGeneratorInfo: [
+          ClaimGeneratorInfo(name: 'TestApp', version: '1.0.0'),
+        ],
+        assertions: [
+          ActionsAssertion(
+            actions: [
+              Action.created(
+                sourceType: DigitalSourceType.digitalCapture,
+                softwareAgent: 'Camera App',
+              ),
+              Action.edited(
+                softwareAgent: 'Editor App',
+                changes: [
+                  RegionOfInterest.spatial(
+                    shape: Shape.rectangle(
+                      origin: Coordinate(x: 0, y: 0),
+                      width: 100,
+                      height: 100,
+                    ),
+                    role: Role.edited,
+                  ),
+                ],
+              ),
+            ],
+          ),
+          CreativeWorkAssertion(
+            author: 'Test Author',
+            copyrightNotice: '2024 Test Author',
+          ),
+        ],
+        ingredients: [Ingredient.parent(title: 'Original Photo')],
+        vendor: 'test-vendor',
+        format: 'image/jpeg',
+      );
+
+      final builder = await c2pa.createBuilder(manifest.toJsonString());
+      expect(builder, isNotNull);
+
+      final call = mockPlatform.methodCalls.last;
+      expect(
+        call.arguments!['manifestJson'],
+        contains('Complete Manifest Test'),
+      );
+      expect(call.arguments!['manifestJson'], contains('Test Author'));
+      expect(call.arguments!['manifestJson'], contains('Original Photo'));
     });
 
     test('createBuilderFromArchive creates builder', () async {
@@ -291,7 +412,7 @@ void main() {
       final thumbnail = Uint8List.fromList([0xFF, 0xD8, 0xFF, 0xE0]);
 
       await builder.addResource(
-        ResourceRef(
+        BuilderResource(
           uri: 'c2pa:thumbnail.jpg',
           data: thumbnail,
           mimeType: 'image/jpeg',
@@ -313,7 +434,7 @@ void main() {
         mimeType: 'image/jpeg',
         config: IngredientConfig(
           title: 'Test Ingredient',
-          relationship: IngredientRelationship.parentOf,
+          relationship: Relationship.parentOf,
         ),
       );
 
@@ -335,16 +456,6 @@ void main() {
       expect(mockBuilder.actions, hasLength(1));
     });
 
-    test('builder addAssertion works', () async {
-      final builder = await c2pa.createBuilder('{}');
-
-      builder.addAssertion('custom.assertion', {'key': 'value'});
-
-      final mockBuilder = mockPlatform.builders[builder.handle] as MockBuilder;
-      expect(mockBuilder.assertions, hasLength(1));
-      expect(mockBuilder.assertions.first.label, 'custom.assertion');
-    });
-
     test('builder toArchive returns archive', () async {
       final builder = await c2pa.createBuilder('{}');
       final archive = await builder.toArchive();
@@ -359,26 +470,11 @@ void main() {
       final result = await builder.sign(
         sourceData: testData,
         mimeType: 'image/jpeg',
-        signerInfo: signerInfo,
+        signer: signer,
       );
 
       expect(result.signedData, isNotNull);
       expect(result.manifestSize, greaterThanOrEqualTo(0));
-    });
-
-    test('builder signFile works', () async {
-      final builder = await c2pa.createBuilder('{}');
-
-      await builder.signFile(
-        sourcePath: '/input.jpg',
-        destPath: '/output.jpg',
-        signerInfo: signerInfo,
-      );
-
-      expect(
-        mockPlatform.methodCalls.any((c) => c.method == 'builderSignFile'),
-        true,
-      );
     });
 
     test('builder dispose works', () async {
@@ -394,16 +490,16 @@ void main() {
       final builder = await c2pa.createBuilder('{}');
       builder.dispose();
 
-      expect(() => builder.setTitle('Test'), throwsStateError);
+      expect(() => builder.setIntent(ManifestIntent.create), throwsStateError);
     });
   });
 
   group('Advanced Signing API', () {
-    late SignerInfo signerInfo;
+    late PemSigner signer;
     late ManifestBuilder builder;
 
     setUp(() async {
-      signerInfo = SignerInfo(
+      signer = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem:
             '-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----',
@@ -427,7 +523,7 @@ void main() {
     test('signHashedEmbeddable returns manifest', () async {
       final manifest = await c2pa.signHashedEmbeddable(
         builder: builder,
-        signerInfo: signerInfo,
+        signer: signer,
         dataHash: 'abc123hash',
         mimeType: 'image/jpeg',
       );
@@ -448,7 +544,7 @@ void main() {
 
     test('getSignerReserveSize returns size', () async {
       mockPlatform.mockReserveSize = 12345;
-      final size = await c2pa.getSignerReserveSize(signerInfo);
+      final size = await c2pa.getSignerReserveSize(signer);
 
       expect(size, 12345);
     });
@@ -488,7 +584,7 @@ void main() {
       mockPlatform.simulateError = true;
       mockPlatform.errorMessage = 'Signing failed';
 
-      final signerInfo = SignerInfo(
+      final signer = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem: 'cert',
         privateKeyPem: 'key',
@@ -499,7 +595,7 @@ void main() {
           sourceData: Uint8List(1),
           mimeType: 'image/jpeg',
           manifestJson: '{}',
-          signerInfo: signerInfo,
+          signer: signer,
         ),
         throwsException,
       );
@@ -507,16 +603,17 @@ void main() {
   });
 
   group('Data classes', () {
-    group('SignerInfo', () {
+    group('PemSigner', () {
       test('toMap serializes correctly', () {
-        final info = SignerInfo(
+        final signer = PemSigner(
           algorithm: SigningAlgorithm.ps256,
           certificatePem: 'cert_pem',
           privateKeyPem: 'key_pem',
           tsaUrl: 'https://tsa.example.com',
         );
 
-        final map = info.toMap();
+        final map = signer.toMap();
+        expect(map['type'], 'pem');
         expect(map['algorithm'], 'ps256');
         expect(map['certificatePem'], 'cert_pem');
         expect(map['privateKeyPem'], 'key_pem');
@@ -525,16 +622,108 @@ void main() {
 
       test('fromMap deserializes correctly', () {
         final map = {
+          'type': 'pem',
           'algorithm': 'ed25519',
           'certificatePem': 'cert',
           'privateKeyPem': 'key',
           'tsaUrl': null,
         };
 
-        final info = SignerInfo.fromMap(map);
-        expect(info.algorithm, SigningAlgorithm.ed25519);
-        expect(info.certificatePem, 'cert');
-        expect(info.tsaUrl, isNull);
+        final signer = PemSigner.fromMap(map);
+        expect(signer.algorithm, SigningAlgorithm.ed25519);
+        expect(signer.certificatePem, 'cert');
+        expect(signer.tsaUrl, isNull);
+      });
+    });
+
+    group('CallbackSigner', () {
+      test('toMap serializes correctly', () {
+        final signer = CallbackSigner(
+          algorithm: SigningAlgorithm.es256,
+          certificateChainPem: 'cert_chain',
+          signCallback: (data) async => Uint8List.fromList([1, 2, 3]),
+          tsaUrl: 'https://tsa.example.com',
+        );
+
+        final map = signer.toMap();
+        expect(map['type'], 'callback');
+        expect(map['algorithm'], 'es256');
+        expect(map['certificateChainPem'], 'cert_chain');
+        expect(map['tsaUrl'], 'https://tsa.example.com');
+      });
+    });
+
+    group('KeystoreSigner', () {
+      test('toMap serializes correctly', () {
+        final signer = KeystoreSigner(
+          algorithm: SigningAlgorithm.es384,
+          keyAlias: 'my-key',
+          certificateChainPem: 'cert_chain',
+          tsaUrl: 'https://tsa.example.com',
+        );
+
+        final map = signer.toMap();
+        expect(map['type'], 'keystore');
+        expect(map['algorithm'], 'es384');
+        expect(map['keyAlias'], 'my-key');
+        expect(map['certificateChainPem'], 'cert_chain');
+        expect(map['tsaUrl'], 'https://tsa.example.com');
+      });
+    });
+
+    group('HardwareSigner', () {
+      test('toMap serializes correctly', () {
+        final signer = HardwareSigner(
+          keyAlias: 'secure-key',
+          certificateChainPem: 'cert_chain',
+          requireUserAuthentication: true,
+          tsaUrl: 'https://tsa.example.com',
+        );
+
+        final map = signer.toMap();
+        expect(map['type'], 'hardware');
+        expect(map['algorithm'], 'es256'); // Hardware only supports ES256
+        expect(map['keyAlias'], 'secure-key');
+        expect(map['certificateChainPem'], 'cert_chain');
+        expect(map['requireUserAuthentication'], true);
+        expect(map['tsaUrl'], 'https://tsa.example.com');
+      });
+
+      test('algorithm is always ES256', () {
+        final signer = HardwareSigner(
+          keyAlias: 'test-key',
+          certificateChainPem: 'cert',
+        );
+
+        expect(signer.algorithm, SigningAlgorithm.es256);
+      });
+    });
+
+    group('RemoteSigner', () {
+      test('toMap serializes correctly', () {
+        final signer = RemoteSigner(
+          configurationUrl: 'https://sign.example.com/config',
+          bearerToken: 'test-token',
+          customHeaders: {'X-Custom': 'value'},
+        );
+
+        final map = signer.toMap();
+        expect(map['type'], 'remote');
+        expect(map['configurationUrl'], 'https://sign.example.com/config');
+        expect(map['bearerToken'], 'test-token');
+        expect(map['customHeaders'], {'X-Custom': 'value'});
+      });
+
+      test('toMap without optional fields', () {
+        final signer = RemoteSigner(
+          configurationUrl: 'https://sign.example.com/config',
+        );
+
+        final map = signer.toMap();
+        expect(map['type'], 'remote');
+        expect(map['configurationUrl'], 'https://sign.example.com/config');
+        expect(map['bearerToken'], isNull);
+        expect(map['customHeaders'], isNull);
       });
     });
 
@@ -573,7 +762,7 @@ void main() {
       test('toJson serializes relationship correctly', () {
         final config = IngredientConfig(
           title: 'Test Ingredient',
-          relationship: IngredientRelationship.parentOf,
+          relationship: Relationship.parentOf,
         );
 
         final json = config.toJson();

@@ -31,55 +31,55 @@ void main() {
     basicManifest = await rootBundle.loadString('assets/test_manifests/basic_manifest.json');
   });
 
-  group('SignerInfo', () {
-    testWidgets('SignerInfo construction with ES256', (tester) async {
-      final signerInfo = SignerInfo(
+  group('PemSigner', () {
+    testWidgets('PemSigner construction with ES256', (tester) async {
+      final signer = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem: testCert,
         privateKeyPem: testKey,
       );
 
-      expect(signerInfo.algorithm, SigningAlgorithm.es256);
-      expect(signerInfo.certificatePem, testCert);
-      expect(signerInfo.privateKeyPem, testKey);
-      expect(signerInfo.tsaUrl, isNull);
+      expect(signer.algorithm, SigningAlgorithm.es256);
+      expect(signer.certificatePem, testCert);
+      expect(signer.privateKeyPem, testKey);
+      expect(signer.tsaUrl, isNull);
     });
 
-    testWidgets('SignerInfo with TSA URL', (tester) async {
-      final signerInfo = SignerInfo(
+    testWidgets('PemSigner with TSA URL', (tester) async {
+      final signer = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem: testCert,
         privateKeyPem: testKey,
         tsaUrl: 'http://timestamp.example.com',
       );
 
-      expect(signerInfo.tsaUrl, 'http://timestamp.example.com');
+      expect(signer.tsaUrl, 'http://timestamp.example.com');
     });
 
-    testWidgets('SignerInfo toMap produces correct map', (tester) async {
-      final signerInfo = SignerInfo(
+    testWidgets('PemSigner toMap produces correct map', (tester) async {
+      final signer = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem: testCert,
         privateKeyPem: testKey,
         tsaUrl: 'http://timestamp.example.com',
       );
 
-      final map = signerInfo.toMap();
+      final map = signer.toMap();
       expect(map['algorithm'], 'es256');
       expect(map['certificatePem'], testCert);
       expect(map['privateKeyPem'], testKey);
       expect(map['tsaUrl'], 'http://timestamp.example.com');
     });
 
-    testWidgets('SignerInfo fromMap round-trip', (tester) async {
-      final original = SignerInfo(
+    testWidgets('PemSigner fromMap round-trip', (tester) async {
+      final original = PemSigner(
         algorithm: SigningAlgorithm.ps256,
         certificatePem: testCert,
         privateKeyPem: testKey,
       );
 
       final map = original.toMap();
-      final restored = SignerInfo.fromMap(map);
+      final restored = PemSigner.fromMap(map);
 
       expect(restored.algorithm, original.algorithm);
       expect(restored.certificatePem, original.certificatePem);
@@ -92,7 +92,7 @@ void main() {
       final byteData = await rootBundle.load('assets/test_images/test_unsigned.jpg');
       final imageBytes = byteData.buffer.asUint8List();
 
-      final signerInfo = SignerInfo(
+      final signer = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem: testCert,
         privateKeyPem: testKey,
@@ -102,7 +102,7 @@ void main() {
         sourceData: imageBytes,
         mimeType: 'image/jpeg',
         manifestJson: basicManifest,
-        signerInfo: signerInfo,
+        signer: signer,
       );
 
       expect(result.signedData, isNotNull);
@@ -113,7 +113,7 @@ void main() {
       final byteData = await rootBundle.load('assets/test_images/test_unsigned.jpg');
       final imageBytes = byteData.buffer.asUint8List();
 
-      final signerInfo = SignerInfo(
+      final signer = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem: testCert,
         privateKeyPem: testKey,
@@ -123,7 +123,7 @@ void main() {
         sourceData: imageBytes,
         mimeType: 'image/jpeg',
         manifestJson: basicManifest,
-        signerInfo: signerInfo,
+        signer: signer,
       );
 
       expect(result.signedDataSize, greaterThan(0));
@@ -142,7 +142,7 @@ void main() {
 
       await sourceFile.writeAsBytes(imageBytes);
 
-      final signerInfo = SignerInfo(
+      final signer = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem: testCert,
         privateKeyPem: testKey,
@@ -152,7 +152,7 @@ void main() {
         sourcePath: sourceFile.path,
         destPath: destFile.path,
         manifestJson: basicManifest,
-        signerInfo: signerInfo,
+        signer: signer,
       );
 
       expect(await destFile.exists(), true);
@@ -185,15 +185,6 @@ void main() {
       builder.dispose();
     });
 
-    testWidgets('ManifestBuilder can set title and generator', (tester) async {
-      final builder = await c2pa.createBuilder(basicManifest);
-
-      builder.setTitle('Integration Test Image');
-      builder.setClaimGenerator('c2pa_flutter_integration_test/1.0');
-
-      builder.dispose();
-    });
-
     testWidgets('ManifestBuilder can add actions', (tester) async {
       final builder = await c2pa.createBuilder(basicManifest);
 
@@ -212,20 +203,6 @@ void main() {
       builder.dispose();
     });
 
-    testWidgets('ManifestBuilder can add assertions', (tester) async {
-      final builder = await c2pa.createBuilder(basicManifest);
-
-      builder.addAssertion('stds.schema-org.CreativeWork', {
-        '@context': 'https://schema.org',
-        '@type': 'CreativeWork',
-        'author': [
-          {'@type': 'Person', 'name': 'Test Author'}
-        ],
-      });
-
-      builder.dispose();
-    });
-
     testWidgets('ManifestBuilder sign produces result', (tester) async {
       final byteData = await rootBundle.load('assets/test_images/test_unsigned.jpg');
       final imageBytes = byteData.buffer.asUint8List();
@@ -233,7 +210,7 @@ void main() {
       final builder = await c2pa.createBuilder(basicManifest);
       builder.setIntent(ManifestIntent.create, DigitalSourceType.digitalCapture);
 
-      final signerInfo = SignerInfo(
+      final signer = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem: testCert,
         privateKeyPem: testKey,
@@ -242,7 +219,7 @@ void main() {
       final result = await builder.sign(
         sourceData: imageBytes,
         mimeType: 'image/jpeg',
-        signerInfo: signerInfo,
+        signer: signer,
       );
 
       expect(result.signedData, isNotNull);
@@ -255,7 +232,6 @@ void main() {
     testWidgets('ManifestBuilder toArchive produces archive', (tester) async {
       final builder = await c2pa.createBuilder(basicManifest);
       builder.setIntent(ManifestIntent.create, DigitalSourceType.digitalCapture);
-      builder.setTitle('Archive Test');
 
       final archive = await builder.toArchive();
 
@@ -307,7 +283,7 @@ void main() {
     testWidgets('IngredientConfig as parentOf', (tester) async {
       final config = IngredientConfig(
         title: 'Parent Asset',
-        relationship: IngredientRelationship.parentOf,
+        relationship: Relationship.parentOf,
       );
 
       final map = config.toMap();
@@ -318,7 +294,7 @@ void main() {
     testWidgets('IngredientConfig toJson produces valid JSON', (tester) async {
       final config = IngredientConfig(
         title: 'Test Ingredient',
-        relationship: IngredientRelationship.componentOf,
+        relationship: Relationship.componentOf,
       );
 
       final jsonStr = config.toJson();

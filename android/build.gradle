@@ -1,8 +1,6 @@
 group = "org.guardianproject.c2pa"
 version = "1.0-SNAPSHOT"
 
-def pluginDir = file("${projectDir}")
-
 buildscript {
     ext.kotlin_version = "2.2.20"
     repositories {
@@ -20,12 +18,7 @@ rootProject.allprojects {
     repositories {
         google()
         mavenCentral()
-        maven {
-            url = uri("${pluginDir}/repo")
-            content {
-                includeGroup("org.contentauth")
-            }
-        }
+        maven { url 'https://jitpack.io' }
     }
 }
 
@@ -56,8 +49,7 @@ android {
     }
 
     dependencies {
-        api("org.contentauth:c2pa:0.0.8")
-        implementation("net.java.dev.jna:jna:5.17.0@aar")
+        api("com.github.redaranj:c2pa-android:0.0.9-beta.1")
         testImplementation("org.jetbrains.kotlin:kotlin-test")
         testImplementation("org.mockito:mockito-core:5.0.0")
     }

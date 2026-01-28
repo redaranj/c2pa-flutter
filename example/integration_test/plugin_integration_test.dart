@@ -84,10 +84,11 @@ void main() {
         expect(ValidationStatus.values, contains(ValidationStatus.unknown));
       });
 
-      testWidgets('IngredientRelationship has all expected values', (tester) async {
-        expect(IngredientRelationship.values.length, 2);
-        expect(IngredientRelationship.values, contains(IngredientRelationship.parentOf));
-        expect(IngredientRelationship.values, contains(IngredientRelationship.componentOf));
+      testWidgets('Relationship has all expected values', (tester) async {
+        expect(Relationship.values.length, 3);
+        expect(Relationship.values, contains(Relationship.parentOf));
+        expect(Relationship.values, contains(Relationship.componentOf));
+        expect(Relationship.values, contains(Relationship.inputTo));
       });
     });
 
@@ -122,12 +123,176 @@ void main() {
       testWidgets('IngredientConfig serializes correctly', (tester) async {
         final config = IngredientConfig(
           title: 'Test Ingredient',
-          relationship: IngredientRelationship.parentOf,
+          relationship: Relationship.parentOf,
         );
 
         final map = config.toMap();
         expect(map['title'], 'Test Ingredient');
         expect(map['relationship'], 'parentOf');
+      });
+    });
+
+    group('Manifest Types', () {
+      testWidgets('ManifestDefinition.created generates correct JSON', (tester) async {
+        final manifest = ManifestDefinition.created(
+          title: 'Test Photo',
+          claimGenerator: ClaimGeneratorInfo(name: 'TestApp', version: '1.0'),
+          sourceType: DigitalSourceType.digitalCapture,
+        );
+
+        final json = manifest.toJsonString();
+        expect(json, contains('Test Photo'));
+        expect(json, contains('TestApp/1.0'));
+        expect(json, contains('c2pa.created'));
+        expect(json, contains('digitalCapture'));
+      });
+
+      testWidgets('ManifestDefinition.edited generates correct JSON', (tester) async {
+        final manifest = ManifestDefinition.edited(
+          title: 'Edited Photo',
+          claimGenerator: ClaimGeneratorInfo(name: 'Editor', version: '2.0'),
+          actions: [
+            Action.cropped(softwareAgent: 'Editor/2.0'),
+            Action.filtered(softwareAgent: 'Editor/2.0'),
+          ],
+        );
+
+        final json = manifest.toJsonString();
+        expect(json, contains('Edited Photo'));
+        expect(json, contains('c2pa.cropped'));
+        expect(json, contains('c2pa.filtered'));
+      });
+
+      testWidgets('ManifestDefinition.aiGenerated generates correct JSON', (tester) async {
+        final manifest = ManifestDefinition.aiGenerated(
+          title: 'AI Art',
+          claimGenerator: ClaimGeneratorInfo(name: 'AI Generator', version: '1.0'),
+          trainingMining: TrainingMiningAssertion(
+            entries: [
+              TrainingMiningEntry.aiTraining(
+                permission: TrainingMiningPermission.notAllowed,
+              ),
+            ],
+          ),
+        );
+
+        final json = manifest.toJsonString();
+        expect(json, contains('AI Art'));
+        expect(json, contains('c2pa.ai_generated'));
+        expect(json, contains('trainedAlgorithmicMedia'));
+        expect(json, contains('c2pa.training-mining'));
+      });
+
+      testWidgets('Action factories create correct actions', (tester) async {
+        final created = Action.created(sourceType: DigitalSourceType.digitalCapture);
+        expect(created.action, 'c2pa.created');
+        expect(created.digitalSourceType, contains('digitalCapture'));
+
+        final edited = Action.edited(softwareAgent: 'Test/1.0');
+        expect(edited.action, 'c2pa.edited');
+        expect(edited.softwareAgent, 'Test/1.0');
+
+        final cropped = Action.cropped();
+        expect(cropped.action, 'c2pa.cropped');
+
+        final aiGenerated = Action.aiGenerated(
+          sourceType: DigitalSourceType.trainedAlgorithmicMedia,
+        );
+        expect(aiGenerated.action, 'c2pa.ai_generated');
+      });
+
+      testWidgets('Ingredient factories create correct ingredients', (tester) async {
+        final parent = Ingredient.parent(title: 'Original');
+        expect(parent.relationship, Relationship.parentOf);
+        expect(parent.title, 'Original');
+
+        final component = Ingredient.component(title: 'Overlay');
+        expect(component.relationship, Relationship.componentOf);
+        expect(component.title, 'Overlay');
+      });
+
+      testWidgets('Shape factories create correct shapes', (tester) async {
+        final rect = Shape.rectangle(
+          origin: Coordinate(x: 10, y: 20),
+          width: 100,
+          height: 50,
+        );
+        expect(rect.type, ShapeType.rectangle);
+        expect(rect.origin?.x, 10);
+        expect(rect.width, 100);
+
+        final circle = Shape.circle(
+          origin: Coordinate(x: 50, y: 50),
+          radius: 25,
+        );
+        expect(circle.type, ShapeType.circle);
+        expect(circle.radius, 25);
+
+        final polygon = Shape.polygon(
+          vertices: [
+            Coordinate(x: 0, y: 0),
+            Coordinate(x: 100, y: 0),
+            Coordinate(x: 50, y: 100),
+          ],
+        );
+        expect(polygon.type, ShapeType.polygon);
+        expect(polygon.vertices?.length, 3);
+      });
+
+      testWidgets('RegionOfInterest factories create correct regions', (tester) async {
+        final spatial = RegionOfInterest.spatial(
+          shape: Shape.rectangle(
+            origin: Coordinate(x: 0, y: 0),
+            width: 100,
+            height: 100,
+          ),
+          role: Role.edited,
+        );
+        expect(spatial.region.length, 1);
+        expect(spatial.region.first, isA<SpatialRange>());
+        expect(spatial.role, Role.edited);
+
+        final temporal = RegionOfInterest.temporal(
+          time: Time(start: '0:00', end: '1:30'),
+        );
+        expect(temporal.region.first, isA<TemporalRange>());
+      });
+
+      testWidgets('TrainingMiningEntry factories create correct entries', (tester) async {
+        final aiTraining = TrainingMiningEntry.aiTraining(
+          permission: TrainingMiningPermission.notAllowed,
+        );
+        expect(aiTraining.use, 'aiTraining');
+        expect(aiTraining.permission, TrainingMiningPermission.notAllowed);
+
+        final dataMining = TrainingMiningEntry.dataMining(
+          permission: TrainingMiningPermission.constrained,
+          constraintInfo: 'Research only',
+        );
+        expect(dataMining.use, 'dataMining');
+        expect(dataMining.constraintInfo, 'Research only');
+      });
+
+      testWidgets('Assertions serialize correctly', (tester) async {
+        final actions = ActionsAssertion(
+          actions: [Action.created()],
+        );
+        expect(actions.label, 'c2pa.actions');
+
+        final creative = CreativeWorkAssertion(
+          author: 'Test Author',
+          copyrightNotice: '2024 Test',
+        );
+        expect(creative.label, 'stds.schema-org.CreativeWork');
+
+        final training = TrainingMiningAssertion(
+          entries: [
+            TrainingMiningEntry.aiTraining(
+              permission: TrainingMiningPermission.notAllowed,
+            ),
+          ],
+        );
+        expect(training.label, 'c2pa.training-mining');
       });
     });
   });

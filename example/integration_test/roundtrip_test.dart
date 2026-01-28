@@ -54,7 +54,7 @@ void main() {
         ]
       });
 
-      final signerInfo = SignerInfo(
+      final signer = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem: testCert,
         privateKeyPem: testKey,
@@ -65,7 +65,7 @@ void main() {
         sourceData: testImageBytes,
         mimeType: 'image/jpeg',
         manifestJson: manifest,
-        signerInfo: signerInfo,
+        signer: signer,
       );
 
       expect(signResult.signedData.length, greaterThan(testImageBytes.length));
@@ -101,7 +101,7 @@ void main() {
         ]
       });
 
-      final signerInfo = SignerInfo(
+      final signer = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem: testCert,
         privateKeyPem: testKey,
@@ -112,7 +112,7 @@ void main() {
         sourcePath: sourceFile.path,
         destPath: signedFile.path,
         manifestJson: manifest,
-        signerInfo: signerInfo,
+        signer: signer,
       );
 
       expect(await signedFile.exists(), true);
@@ -149,7 +149,7 @@ void main() {
         ]
       });
 
-      final signerInfo = SignerInfo(
+      final signer = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem: testCert,
         privateKeyPem: testKey,
@@ -159,7 +159,7 @@ void main() {
         sourceData: testImageBytes,
         mimeType: 'image/jpeg',
         manifestJson: manifest,
-        signerInfo: signerInfo,
+        signer: signer,
       );
 
       // Read as structured data
@@ -211,7 +211,7 @@ void main() {
         ]
       });
 
-      final signerInfo = SignerInfo(
+      final signer = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem: testCert,
         privateKeyPem: testKey,
@@ -221,7 +221,7 @@ void main() {
         sourceData: testImageBytes,
         mimeType: 'image/jpeg',
         manifestJson: manifest,
-        signerInfo: signerInfo,
+        signer: signer,
       );
 
       final storeInfo = await c2pa.readManifestFromBytes(
@@ -249,13 +249,12 @@ void main() {
     testWidgets('builder sign then read manifest', (tester) async {
       final manifest = jsonEncode({
         'claim_generator': 'c2pa_flutter_builder_test/1.0',
-        'title': 'Builder Test',
+        'title': 'Builder Roundtrip Test',
         'format': 'image/jpeg',
       });
 
       final builder = await c2pa.createBuilder(manifest);
       builder.setIntent(ManifestIntent.create, DigitalSourceType.digitalCapture);
-      builder.setTitle('Builder Roundtrip Test');
 
       builder.addAction(ActionConfig(
         action: 'c2pa.created',
@@ -263,7 +262,7 @@ void main() {
         digitalSourceType: DigitalSourceType.digitalCapture,
       ));
 
-      final signerInfo = SignerInfo(
+      final signer = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem: testCert,
         privateKeyPem: testKey,
@@ -272,7 +271,7 @@ void main() {
       final result = await builder.sign(
         sourceData: testImageBytes,
         mimeType: 'image/jpeg',
-        signerInfo: signerInfo,
+        signer: signer,
       );
 
       builder.dispose();
@@ -290,14 +289,13 @@ void main() {
     testWidgets('builder archive roundtrip', (tester) async {
       final manifest = jsonEncode({
         'claim_generator': 'c2pa_flutter_archive_test/1.0',
-        'title': 'Archive Test',
+        'title': 'Archive Test Image',
         'format': 'image/jpeg',
       });
 
       // Create initial builder and configure it
       final builder1 = await c2pa.createBuilder(manifest);
       builder1.setIntent(ManifestIntent.create, DigitalSourceType.digitalCapture);
-      builder1.setTitle('Archive Test Image');
 
       // Export to archive
       final archive = await builder1.toArchive();
@@ -308,7 +306,7 @@ void main() {
       // Create new builder from archive
       final builder2 = await c2pa.createBuilderFromArchive(archive.data);
 
-      final signerInfo = SignerInfo(
+      final signer = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem: testCert,
         privateKeyPem: testKey,
@@ -317,7 +315,7 @@ void main() {
       final result = await builder2.sign(
         sourceData: testImageBytes,
         mimeType: 'image/jpeg',
-        signerInfo: signerInfo,
+        signer: signer,
       );
 
       builder2.dispose();
@@ -329,7 +327,7 @@ void main() {
 
   group('Multiple Signing', () {
     testWidgets('sign same image multiple times', (tester) async {
-      final signerInfo = SignerInfo(
+      final signer = PemSigner(
         algorithm: SigningAlgorithm.es256,
         certificatePem: testCert,
         privateKeyPem: testKey,
@@ -356,7 +354,7 @@ void main() {
         sourceData: testImageBytes,
         mimeType: 'image/jpeg',
         manifestJson: manifest1,
-        signerInfo: signerInfo,
+        signer: signer,
       );
 
       // Second sign (editing the first)
@@ -383,7 +381,7 @@ void main() {
         sourceData: result1.signedData,
         mimeType: 'image/jpeg',
         manifestJson: manifest2,
-        signerInfo: signerInfo,
+        signer: signer,
       );
 
       // Read the final manifest

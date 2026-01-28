@@ -95,7 +95,7 @@ abstract class C2paPlatform extends PlatformInterface {
     required Uint8List sourceData,
     required String mimeType,
     required String manifestJson,
-    required SignerInfo signerInfo,
+    required C2paSigner signer,
   }) {
     throw UnimplementedError('signBytes() has not been implemented.');
   }
@@ -104,7 +104,7 @@ abstract class C2paPlatform extends PlatformInterface {
     required String sourcePath,
     required String destPath,
     required String manifestJson,
-    required SignerInfo signerInfo,
+    required C2paSigner signer,
   }) {
     throw UnimplementedError('signFile() has not been implemented.');
   }
@@ -166,7 +166,7 @@ abstract class C2paPlatform extends PlatformInterface {
     int handle,
     Uint8List sourceData,
     String mimeType,
-    SignerInfo signerInfo,
+    C2paSigner signer,
   ) {
     throw UnimplementedError('builderSign() has not been implemented.');
   }
@@ -175,7 +175,7 @@ abstract class C2paPlatform extends PlatformInterface {
     int handle,
     String sourcePath,
     String destPath,
-    SignerInfo signerInfo,
+    C2paSigner signer,
   ) {
     throw UnimplementedError('builderSignFile() has not been implemented.');
   }
@@ -200,7 +200,7 @@ abstract class C2paPlatform extends PlatformInterface {
 
   Future<Uint8List> signHashedEmbeddable({
     required int builderHandle,
-    required SignerInfo signerInfo,
+    required C2paSigner signer,
     required String dataHash,
     required String mimeType,
     Uint8List? assetData,
@@ -217,10 +217,71 @@ abstract class C2paPlatform extends PlatformInterface {
     throw UnimplementedError('formatEmbeddable() has not been implemented.');
   }
 
-  Future<int> getSignerReserveSize(SignerInfo signerInfo) {
+  Future<int> getSignerReserveSize(C2paSigner signer) {
     throw UnimplementedError(
       'getSignerReserveSize() has not been implemented.',
     );
+  }
+
+  // ===========================================================================
+  // Key Management API
+  // ===========================================================================
+
+  Future<bool> isHardwareSigningAvailable() {
+    throw UnimplementedError(
+      'isHardwareSigningAvailable() has not been implemented.',
+    );
+  }
+
+  Future<void> createKey({
+    required String keyAlias,
+    required SigningAlgorithm algorithm,
+    required bool useHardware,
+  }) {
+    throw UnimplementedError('createKey() has not been implemented.');
+  }
+
+  Future<bool> deleteKey(String keyAlias) {
+    throw UnimplementedError('deleteKey() has not been implemented.');
+  }
+
+  Future<bool> keyExists(String keyAlias) {
+    throw UnimplementedError('keyExists() has not been implemented.');
+  }
+
+  Future<String> exportPublicKey(String keyAlias) {
+    throw UnimplementedError('exportPublicKey() has not been implemented.');
+  }
+
+  Future<void> importKey({
+    required String keyAlias,
+    required String privateKeyPem,
+    required String certificateChainPem,
+  }) {
+    throw UnimplementedError('importKey() has not been implemented.');
+  }
+
+  Future<String> createCSR({
+    required String keyAlias,
+    required String commonName,
+    String? organization,
+    String? organizationalUnit,
+    String? country,
+    String? state,
+    String? locality,
+  }) {
+    throw UnimplementedError('createCSR() has not been implemented.');
+  }
+
+  Future<Map<String, dynamic>> enrollHardwareKey({
+    required String keyAlias,
+    required String signingServerUrl,
+    String? bearerToken,
+    String? commonName,
+    String? organization,
+    bool useStrongBox = false,
+  }) {
+    throw UnimplementedError('enrollHardwareKey() has not been implemented.');
   }
 
   // ===========================================================================
