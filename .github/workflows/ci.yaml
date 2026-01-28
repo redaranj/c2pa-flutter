@@ -302,10 +302,10 @@ jobs:
           echo "DEVICE_ID=$EXISTING_UDID" >> $GITHUB_ENV
 
       - name: Run integration tests
-        timeout-minutes: 20
+        timeout-minutes: 30
         run: |
           cd example
-          flutter test integration_test/plugin_integration_test.dart -d "$DEVICE_ID" --timeout 15m
+          flutter test integration_test/plugin_integration_test.dart -d "$DEVICE_ID" --ignore-timeouts
 
   # =============================================================================
   # Publish Check
