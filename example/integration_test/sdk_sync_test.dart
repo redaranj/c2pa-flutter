@@ -513,7 +513,9 @@ void main() {
       final source = File('${tempDir.path}/sdk_sync_source.jpg');
       await source.writeAsBytes(jpeg);
       final dest = File('${tempDir.path}/sdk_sync_dest.jpg');
-      await dest.writeAsBytes(Uint8List(jpeg.length * 4));
+      // A leftover file far larger than any signed output of the fixture.
+      const leftoverSize = 1024 * 1024;
+      await dest.writeAsBytes(Uint8List(leftoverSize));
 
       final builder = await c2pa.createBuilder(manifest());
       builder.setIntent(
@@ -527,7 +529,7 @@ void main() {
           signer: pemSigner(),
         );
         expect(result.manifestSize, greaterThan(0));
-        expect(await dest.length(), lessThan(jpeg.length * 4));
+        expect(await dest.length(), lessThan(leftoverSize));
         final store = await c2pa.readManifestFromFile(dest.path);
         expect(store?.activeManifest, isNotNull);
       } finally {

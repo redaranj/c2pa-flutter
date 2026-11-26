@@ -11,6 +11,8 @@ each license.
 */
 
 import C2PA
+// Foundation also declares `Stream` (NSStream); prefer the C2PA type.
+import class C2PA.Stream
 import Flutter
 import UIKit
 
