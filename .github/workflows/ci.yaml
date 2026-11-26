@@ -8,8 +8,8 @@ name: CI
 on:
   push:
     branches: [main, develop]
+  # Every pull request, including ones stacked on another PR's branch.
   pull_request:
-    branches: [main, develop]
   workflow_dispatch:
 
 env:
