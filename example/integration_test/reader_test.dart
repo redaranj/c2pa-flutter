@@ -144,19 +144,14 @@ void main() {
     testWidgets('ReaderOptions can be constructed with defaults', (tester) async {
       const options = ReaderOptions();
       expect(options.detailed, false);
-      expect(options.dataDir, isNull);
-    });
-
-    testWidgets('ReaderOptions can specify dataDir', (tester) async {
-      final options = ReaderOptions(dataDir: tempDir.path);
-      expect(options.dataDir, tempDir.path);
+      expect(options.context, isNull);
     });
 
     testWidgets('ReaderOptions toMap produces correct map', (tester) async {
-      final options = ReaderOptions(detailed: true, dataDir: tempDir.path);
+      const options = ReaderOptions(detailed: true);
       final map = options.toMap();
       expect(map['detailed'], true);
-      expect(map['dataDir'], tempDir.path);
+      expect(map['contextHandle'], isNull);
     });
   });
 }

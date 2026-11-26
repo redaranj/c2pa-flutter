@@ -106,10 +106,12 @@ import 'dart:typed_data';
 import 'package:meta/meta.dart';
 
 import 'c2pa_platform_interface.dart';
+import 'src/context_types.dart';
 import 'src/manifest_types.dart';
 import 'src/settings_definition.dart';
 
 // Export manifest types
+export 'src/context_types.dart';
 export 'src/manifest_types.dart';
 export 'src/manifest_validator.dart';
 export 'src/settings_definition.dart';
@@ -156,6 +158,9 @@ enum ValidationStatus { valid, invalid, unknown }
 /// - [KeystoreSigner] - Android Keystore / iOS Keychain signing
 /// - [HardwareSigner] - Hardware-backed signing (StrongBox/Secure Enclave)
 /// - [RemoteSigner] - Remote web service signing
+/// - [SettingsSigner] - Signer described by C2PA settings
+/// - [CawgIdentitySigner] - A claim signer combined with a CAWG X.509
+///   identity signer
 sealed class C2paSigner {
   const C2paSigner();
 
@@ -513,6 +518,59 @@ class SettingsSigner extends C2paSigner {
   }
 }
 
+/// Combines a claim signer with an X.509 identity signer, so that signing also
+/// emits a CAWG `cawg.identity` assertion naming the identity signer.
+///
+/// Both inner signers can be any type except [SettingsSigner] or another
+/// [CawgIdentitySigner], and must be distinct.
+///
+/// ```dart
+/// final signer = CawgIdentitySigner(
+///   claimSigner: PemSigner(...),
+///   identitySigner: PemSigner(...),
+///   referencedAssertions: ['c2pa.actions'],
+/// );
+/// await builder.sign(sourceData: bytes, mimeType: 'image/jpeg', signer: signer);
+/// ```
+@immutable
+class CawgIdentitySigner extends C2paSigner {
+  /// Signs the C2PA claim.
+  final C2paSigner claimSigner;
+
+  /// Signs the CAWG identity assertion.
+  final C2paSigner identitySigner;
+
+  /// Labels of the assertions the identity assertion references.
+  final List<String> referencedAssertions;
+
+  /// Optional CAWG roles for the named actor.
+  final List<String> roles;
+
+  const CawgIdentitySigner({
+    required this.claimSigner,
+    required this.identitySigner,
+    this.referencedAssertions = const [],
+    this.roles = const [],
+  });
+
+  @override
+  SigningAlgorithm get algorithm => claimSigner.algorithm;
+
+  @override
+  String? get tsaUrl => claimSigner.tsaUrl;
+
+  @override
+  Map<String, dynamic> toMap() {
+    return {
+      'type': 'cawgIdentity',
+      'claimSigner': claimSigner.toMap(),
+      'identitySigner': identitySigner.toMap(),
+      'referencedAssertions': referencedAssertions,
+      'roles': roles,
+    };
+  }
+}
+
 /// Result of a signing operation
 @immutable
 class SignResult {
@@ -538,13 +596,17 @@ class ReaderOptions {
   /// Whether to return detailed JSON including validation info
   final bool detailed;
 
-  /// Directory to write resources (thumbnails, etc.)
-  final String? dataDir;
+  /// Context whose settings, HTTP resolver and progress callback apply to
+  /// the read. When null, the settings from [C2pa.loadSettings] apply.
+  ///
+  /// Resources such as thumbnails are no longer written to a directory while
+  /// reading; fetch them with [C2pa.extractResource].
+  final C2paContext? context;
 
-  const ReaderOptions({this.detailed = false, this.dataDir});
+  const ReaderOptions({this.detailed = false, this.context});
 
   Map<String, dynamic> toMap() {
-    return {'detailed': detailed, 'dataDir': dataDir};
+    return {'detailed': detailed, 'contextHandle': context?.handle};
   }
 }
 
@@ -1004,6 +1066,19 @@ class BuilderSignResult {
   });
 }
 
+/// Result of [ManifestBuilder.signFile]: the signed asset is written to the
+/// destination path, so only the manifest comes back.
+@immutable
+class BuilderFileSignResult {
+  /// The manifest bytes (if available)
+  final Uint8List? manifestBytes;
+
+  /// Size of the C2PA manifest data
+  final int manifestSize;
+
+  const BuilderFileSignResult({this.manifestBytes, required this.manifestSize});
+}
+
 /// Archive data from a builder (for serialization)
 @immutable
 class BuilderArchive {
@@ -1090,6 +1165,13 @@ abstract class ManifestBuilder {
   /// Set a remote URL for cloud-based manifests
   void setRemoteUrl(String url);
 
+  /// Add an action to the manifest
+  void addAction(ActionConfig action);
+
+  /// Set the base directory that relative resource paths in the manifest
+  /// definition are resolved against.
+  Future<void> setBasePath(String path);
+
   /// Add a resource (thumbnail, icon, etc.)
   Future<void> addResource(BuilderResource resource);
 
@@ -1102,8 +1184,9 @@ abstract class ManifestBuilder {
 
   /// Add an ingredient from a file path.
   ///
-  /// Prefer this over [addIngredient] for large files — the native plugin reads
-  /// the file directly and avoids round-tripping the bytes through the Dart VM.
+  /// Prefer this over [addIngredient] for large files: the native plugin
+  /// reads the file directly instead of passing the bytes through Dart. A
+  /// missing file is an error.
   ///
   /// If [mimeType] is null, the native side infers it from the file extension.
   Future<void> addIngredientFromFile({
@@ -1112,17 +1195,86 @@ abstract class ManifestBuilder {
     IngredientConfig? config,
   });
 
-  /// Add an action to the manifest
-  void addAction(ActionConfig action);
+  /// Add an ingredient from an archive written by [writeIngredientArchive].
+  Future<void> addIngredientFromArchive(Uint8List archive);
+
+  /// Export one ingredient already added to this builder as an archive that
+  /// another builder can import with [addIngredientFromArchive].
+  ///
+  /// [ingredientId] is matched against the ingredient's `label`, then its
+  /// `instance_id`. On Android the builder's settings must enable
+  /// `builder.generate_c2pa_archive`.
+  Future<Uint8List> writeIngredientArchive(String ingredientId);
 
   /// Export the builder to an archive for later use
   Future<BuilderArchive> toArchive();
 
-  /// Sign the manifest and embed it in the source data
+  /// Sign the manifest and embed it in the source data.
+  ///
+  /// When [signer] is null, the signer of the context the builder was created
+  /// on is used; the call fails if that context has none. A [SettingsSigner]
+  /// cannot be passed here: put the signer in the context's settings instead.
   Future<BuilderSignResult> sign({
     required Uint8List sourceData,
     required String mimeType,
-    required C2paSigner signer,
+    C2paSigner? signer,
+  });
+
+  /// Sign the file at [sourcePath] into [destPath], streaming both files
+  /// natively so large assets never pass through Dart. An existing
+  /// destination is replaced.
+  ///
+  /// [signer] works as in [sign]. [mimeType] defaults to the type implied by
+  /// the source file's extension.
+  Future<BuilderFileSignResult> signFile({
+    required String sourcePath,
+    required String destPath,
+    C2paSigner? signer,
+    String? mimeType,
+  });
+
+  // ---------------------------------------------------------------------------
+  // Embeddable manifests (data-hash and BMFF workflows)
+  //
+  // These sign a manifest for an asset the application writes itself. They
+  // use the signer of the builder's context, so create the builder from a
+  // C2paContext that has one.
+  // ---------------------------------------------------------------------------
+
+  /// Whether [mimeType] needs a placeholder before hashing.
+  Future<bool> needsPlaceholder(String mimeType);
+
+  /// A placeholder manifest of the exact final size, to embed in the asset
+  /// before hashing it.
+  Future<Uint8List> placeholder(String mimeType);
+
+  /// Byte ranges to leave out of the data hash, normally the range the
+  /// placeholder occupies. Call after [placeholder].
+  Future<void> setDataHashExclusions(List<DataHashExclusion> exclusions);
+
+  /// Hash the asset from memory.
+  Future<void> updateHashFromBytes(String mimeType, Uint8List data);
+
+  /// Hash the asset from a file.
+  Future<void> updateHashFromFile(String path, {String? mimeType});
+
+  /// Sign the manifest for embedding. After [placeholder], the result has
+  /// the placeholder's size and can overwrite it in place.
+  Future<Uint8List> signEmbeddable(String mimeType);
+
+  /// How [mimeType] binds the manifest to the asset.
+  Future<C2paHashType> hashType(String mimeType);
+
+  /// Use fixed-size Merkle hashing of [fixedSizeKb] KB leaves for fragmented
+  /// BMFF. Call after [placeholder].
+  Future<void> setFixedSizeMerkle(int fixedSizeKb);
+
+  /// Hash one chunk of `mdat` data for fragmented BMFF, in write order.
+  /// [mdatId] is 0-based.
+  Future<void> hashMdatBytes({
+    required int mdatId,
+    required Uint8List data,
+    bool largeSize = false,
   });
 
   /// Dispose of native resources
@@ -1232,27 +1384,28 @@ class C2paSettings {
 // C2PAContext - Handle-based shared configuration context
 // =============================================================================
 
-/// Shared configuration context for creating readers and builders.
+/// Shared configuration for readers and builders.
 ///
-/// A context encapsulates settings and can be shared across multiple
-/// Reader and Builder instances.
+/// A context carries settings and, optionally, a signer, a progress callback
+/// and an HTTP resolver. Readers and builders created on it use all of them,
+/// and [cancel] stops every operation running on it. Settings are copied
+/// when the context is created, so later changes to a [C2paSettings] do not
+/// affect an existing context.
 ///
 /// ## Example
 ///
 /// ```dart
-/// // Default context
-/// final context = await C2paContext.create();
+/// final context = await C2paContext.create(
+///   settings: settings,
+///   signer: PemSigner(...),
+///   onProgress: (p) => print('${p.phase.name} ${p.step}/${p.total}'),
+///   httpResolver: const NativeHttpResolver(),
+/// );
 ///
-/// // Context with custom settings
-/// final settings = await C2paSettings.create();
-/// await settings.updateFromString(settingsJson, 'json');
-/// final context = await C2paContext.fromSettings(settings);
-///
-/// // Use with reader or builder
-/// final store = await c2pa.readManifestFromFileWithContext('/path', context);
 /// final builder = await c2pa.createBuilderFromContext(context, manifestJson);
+/// final signed = await builder.sign(sourceData: bytes, mimeType: 'image/jpeg');
 ///
-/// // Always dispose when done
+/// builder.dispose();
 /// context.dispose();
 /// ```
 class C2paContext {
@@ -1262,21 +1415,48 @@ class C2paContext {
   C2paContext._(this._handle);
 
   /// The native handle for this context (for internal use).
-  int get handle => _handle;
+  int get handle {
+    _checkDisposed();
+    return _handle;
+  }
 
-  /// Create a new context with default settings.
-  static Future<C2paContext> create() async {
-    final handle = await C2paPlatform.instance.createContext();
+  /// Create a context.
+  ///
+  /// * [settings] are copied into the context.
+  /// * [signer] becomes the context signer, used by builders that sign
+  ///   without an explicit signer and by the embeddable-manifest workflow.
+  ///   It takes priority over a signer defined in [settings]. A
+  ///   [SettingsSigner] is not accepted here; put the signer in [settings].
+  /// * [onProgress] is called on the main isolate as operations on this
+  ///   context progress.
+  /// * [httpResolver] performs the SDK's HTTP requests (remote manifests,
+  ///   OCSP, timestamps).
+  static Future<C2paContext> create({
+    C2paSettings? settings,
+    C2paSigner? signer,
+    void Function(C2paProgress progress)? onProgress,
+    C2paHttpResolver? httpResolver,
+  }) async {
+    settings?._checkDisposed();
+    final handle = await C2paPlatform.instance.createContext(
+      settingsHandle: settings?._handle,
+      signer: signer,
+      onProgress: onProgress,
+      httpResolver: httpResolver,
+    );
     return C2paContext._(handle);
   }
 
   /// Create a context from custom settings.
-  static Future<C2paContext> fromSettings(C2paSettings settings) async {
-    settings._checkDisposed();
-    final handle = await C2paPlatform.instance.createContextFromSettings(
-      settings._handle,
-    );
-    return C2paContext._(handle);
+  static Future<C2paContext> fromSettings(C2paSettings settings) =>
+      create(settings: settings);
+
+  /// Cancel every operation currently running on this context. The
+  /// cancelled operations fail with a C2PA error. Does nothing when the
+  /// context is idle.
+  Future<void> cancel() {
+    _checkDisposed();
+    return C2paPlatform.instance.contextCancel(_handle);
   }
 
   void _checkDisposed() {
@@ -1285,7 +1465,9 @@ class C2paContext {
     }
   }
 
-  /// Dispose of native resources.
+  /// Dispose of native resources. Readers and builders already created on
+  /// the context keep working, but its progress callback and HTTP resolver
+  /// stop.
   void dispose() {
     if (!_disposed) {
       _disposed = true;
@@ -1428,7 +1610,7 @@ class C2pa {
     final json = await C2paPlatform.instance.readFileDetailed(
       path,
       options.detailed,
-      options.dataDir,
+      contextHandle: options.context?.handle,
     );
     if (json == null) return null;
     return ManifestStoreInfo.fromJson(json);
@@ -1446,6 +1628,7 @@ class C2pa {
       data,
       mimeType,
       options.detailed,
+      contextHandle: options.context?.handle,
     );
     if (json == null) return null;
     return ManifestStoreInfo.fromJson(json);
@@ -1457,16 +1640,97 @@ class C2pa {
   Future<Uint8List?> extractResource(
     Uint8List data,
     String mimeType,
-    String uri,
-  ) {
-    return C2paPlatform.instance.extractResource(data, mimeType, uri);
+    String uri, {
+    C2paContext? context,
+  }) {
+    return C2paPlatform.instance.extractResource(
+      data,
+      mimeType,
+      uri,
+      contextHandle: context?.handle,
+    );
   }
 
-  /// Read ingredient information from a file
+  /// Read the manifest store of the file at [path] as crJSON, the Content
+  /// Credentials JSON form used for conformance testing.
+  Future<String> readCrJsonFromFile(String path, {C2paContext? context}) {
+    return C2paPlatform.instance.readCrJson(
+      path: path,
+      contextHandle: context?.handle,
+    );
+  }
+
+  /// Read the manifest store in [data] as crJSON.
+  Future<String> readCrJsonFromBytes(
+    Uint8List data,
+    String mimeType, {
+    C2paContext? context,
+  }) {
+    return C2paPlatform.instance.readCrJson(
+      data: data,
+      mimeType: mimeType,
+      contextHandle: context?.handle,
+    );
+  }
+
+  /// Validate the file at [path] against a manifest store supplied
+  /// separately in [manifestData], for sidecar (`.c2pa`) or remote manifests.
   ///
-  /// Returns JSON string with ingredient data.
-  Future<String?> readIngredientFromFile(String path, {String? dataDir}) {
-    return C2paPlatform.instance.readIngredientFile(path, dataDir);
+  /// **Platform note.** c2pa-android has no context-aware form of this
+  /// reader, so [context] is ignored on Android.
+  Future<ManifestStoreInfo> readFileWithManifest(
+    String path,
+    Uint8List manifestData, {
+    String? mimeType,
+    ReaderOptions options = const ReaderOptions(),
+  }) async {
+    final json = await C2paPlatform.instance.readWithManifest(
+      path: path,
+      mimeType: mimeType,
+      manifestData: manifestData,
+      detailed: options.detailed,
+      contextHandle: options.context?.handle,
+    );
+    return ManifestStoreInfo.fromJson(json);
+  }
+
+  /// Validate [data] against a manifest store supplied separately in
+  /// [manifestData]. See [readFileWithManifest].
+  Future<ManifestStoreInfo> readBytesWithManifest(
+    Uint8List data,
+    String mimeType,
+    Uint8List manifestData, {
+    ReaderOptions options = const ReaderOptions(),
+  }) async {
+    final json = await C2paPlatform.instance.readWithManifest(
+      data: data,
+      mimeType: mimeType,
+      manifestData: manifestData,
+      detailed: options.detailed,
+      contextHandle: options.context?.handle,
+    );
+    return ManifestStoreInfo.fromJson(json);
+  }
+
+  /// Read a fragmented BMFF asset (for example fragmented MP4 / DASH) from
+  /// its init segment and one media fragment.
+  ///
+  /// **Platform note.** Android only; iOS throws `NOT_IMPLEMENTED_IOS`
+  /// because c2pa-swift has no fragment reader.
+  Future<ManifestStoreInfo> readFragment({
+    required String initPath,
+    required String fragmentPath,
+    String? mimeType,
+    ReaderOptions options = const ReaderOptions(),
+  }) async {
+    final json = await C2paPlatform.instance.readFragment(
+      initPath: initPath,
+      fragmentPath: fragmentPath,
+      mimeType: mimeType,
+      detailed: options.detailed,
+      contextHandle: options.context?.handle,
+    );
+    return ManifestStoreInfo.fromJson(json);
   }
 
   /// Return the remote manifest URL embedded in the file at [path], if any.
@@ -1485,12 +1749,12 @@ class C2pa {
     return C2paPlatform.instance.isManifestEmbedded(path, mimeType: mimeType);
   }
 
-  /// Get supported MIME types for reading
+  /// Get supported MIME types for reading, as reported by the native SDK.
   Future<List<String>> getSupportedReadMimeTypes() {
     return C2paPlatform.instance.getSupportedReadMimeTypes();
   }
 
-  /// Get supported MIME types for signing
+  /// Get supported MIME types for signing, as reported by the native SDK.
   Future<List<String>> getSupportedSignMimeTypes() {
     return C2paPlatform.instance.getSupportedSignMimeTypes();
   }
@@ -1535,88 +1799,52 @@ class C2pa {
   // Builder API
   // ===========================================================================
 
-  /// Create a new manifest builder from a JSON manifest definition
+  /// Create a new manifest builder from a JSON manifest definition.
+  ///
+  /// The builder uses the settings from [loadSettings]. To use a signer,
+  /// progress callback or other settings, create it with
+  /// [createBuilderFromContext] instead.
   Future<ManifestBuilder> createBuilder(String manifestJson) {
     return C2paPlatform.instance.createBuilder(manifestJson);
   }
 
-  /// Create a manifest builder from a previously saved archive
-  Future<ManifestBuilder> createBuilderFromArchive(Uint8List archiveData) {
-    return C2paPlatform.instance.createBuilderFromArchive(archiveData);
-  }
-
-  // ===========================================================================
-  // Advanced Signing API
-  // ===========================================================================
-
-  /// Create a hashed placeholder for later signing.
-  ///
-  /// This is used for advanced signing workflows where the asset
-  /// needs to be prepared before the actual signing occurs.
-  ///
-  /// **Platform note.** Android is implemented. iOS currently throws
-  /// `NOT_IMPLEMENTED_IOS` — blocked on c2pa-ios exposing
-  /// `Builder.dataHashedPlaceholder` as public Swift API.
-  Future<Uint8List> createHashedPlaceholder({
-    required ManifestBuilder builder,
-    required int reservedSize,
-    required String mimeType,
+  /// Create a manifest builder from a previously saved archive, optionally on
+  /// a [context].
+  Future<ManifestBuilder> createBuilderFromArchive(
+    Uint8List archiveData, {
+    C2paContext? context,
   }) {
-    return C2paPlatform.instance.createHashedPlaceholder(
-      builderHandle: builder.handle,
-      reservedSize: reservedSize,
-      mimeType: mimeType,
+    return C2paPlatform.instance.createBuilderFromArchive(
+      archiveData,
+      contextHandle: context?.handle,
     );
   }
 
-  /// Sign a data-hashed embeddable manifest.
-  ///
-  /// This is used after [createHashedPlaceholder] for advanced signing workflows.
-  ///
-  /// **Platform note.** Android is implemented. iOS currently throws
-  /// `NOT_IMPLEMENTED_IOS` — blocked on c2pa-ios exposing
-  /// `Builder.signDataHashedEmbeddable` as public Swift API.
-  Future<Uint8List> signHashedEmbeddable({
-    required ManifestBuilder builder,
-    required C2paSigner signer,
-    required String dataHash,
-    required String mimeType,
-    Uint8List? assetData,
-  }) {
-    return C2paPlatform.instance.signHashedEmbeddable(
-      builderHandle: builder.handle,
-      signer: signer,
-      dataHash: dataHash,
-      mimeType: mimeType,
-      assetData: assetData,
-    );
-  }
+  // ===========================================================================
+  // Embeddable manifests
+  // ===========================================================================
 
-  /// Convert raw manifest bytes to an embeddable format.
+  /// Wrap raw `application/c2pa` manifest bytes (for example the
+  /// [BuilderSignResult.manifestBytes] of a builder signed after
+  /// [ManifestBuilder.setNoEmbed]) in the framing [mimeType] embeds, ready
+  /// to insert into an asset.
   ///
-  /// A raw manifest (application/c2pa format) cannot be embedded directly.
-  /// This converts it to an embeddable format for the specified MIME type.
-  ///
-  /// **Platform notes.**
-  /// - Android: returns the input unchanged; manifest bytes from
-  ///   [signHashedEmbeddable] are already in the correct format.
-  /// - iOS: currently throws `NOT_IMPLEMENTED_IOS` — blocked on c2pa-ios
-  ///   exposing `c2pa_format_embeddable_manifest` via a public Swift wrapper.
-  Future<Uint8List> formatEmbeddable({
-    required String mimeType,
+  /// Do not pass [ManifestBuilder.placeholder] or
+  /// [ManifestBuilder.signEmbeddable] output: those are already composed.
+  Future<Uint8List> composeManifest({
     required Uint8List manifestBytes,
+    required String mimeType,
   }) {
-    return C2paPlatform.instance.formatEmbeddable(
-      mimeType: mimeType,
+    return C2paPlatform.instance.composeManifest(
       manifestBytes: manifestBytes,
+      mimeType: mimeType,
     );
   }
 
   /// Get the reserve size needed for a signer
   ///
   /// This is useful for pre-allocating space in assets for the signature.
-  /// Note: Only works with [PemSigner] as other signer types need to connect
-  /// to their backing stores to determine reserve size.
+  /// A [SettingsSigner] has no standalone signer object and is rejected.
   Future<int> getSignerReserveSize(C2paSigner signer) {
     return C2paPlatform.instance.getSignerReserveSize(signer);
   }
@@ -1682,7 +1910,9 @@ class C2pa {
   /// **Platform notes.**
   /// - Android: imports into AndroidKeyStore. The key will not have hardware
   ///   protection even if StrongBox is available.
-  /// - iOS: currently throws `NOT_IMPLEMENTED_IOS` (scheduled).
+  /// - iOS: imports EC P-256, P-384 and P-521 keys (PKCS#8 or SEC1 PEM) into
+  ///   the keychain. The certificate chain is not stored; pass it to the
+  ///   [KeystoreSigner]. RSA keys throw `NOT_IMPLEMENTED_IOS`.
   Future<void> importKey({
     required String keyAlias,
     required String privateKeyPem,
@@ -1700,9 +1930,7 @@ class C2pa {
   /// The key must already exist in the platform keystore (created via [createKey]).
   /// Returns a PEM-encoded CSR that can be submitted to a signing server.
   ///
-  /// **Platform note.** Android is implemented. iOS currently throws
-  /// `NOT_IMPLEMENTED_IOS` (scheduled — `CertificateManager.createCSR(keyTag:config:)`
-  /// on iOS is public and usable once the plugin handler is wired up).
+  /// Both platforms create the CSR with the SDK's `CertificateManager`.
   Future<String> createCSR({
     required String keyAlias,
     required String commonName,
@@ -1732,10 +1960,11 @@ class C2pa {
   /// - `certificateChain`: The PEM-encoded certificate chain from the server
   /// - `keyAlias`: The key alias used
   ///
-  /// **Platform note.** Android is implemented via
-  /// `CertificateManager.createSignerWithCSR`. iOS currently throws
-  /// `NOT_IMPLEMENTED_IOS` (scheduled — the plugin needs to compose
-  /// `createKey` + `CertificateManager.createCSR` + `URLSession` POST).
+  /// The CSR is posted as `{"csr": ...}` to
+  /// `<signingServerUrl>/api/v1/certificates/sign`, which must answer with
+  /// `{"certificate_chain": ...}`. On iOS the key is created in the Secure
+  /// Enclave on devices and in the keychain in the simulator; [useStrongBox]
+  /// only applies to Android.
   Future<Map<String, dynamic>> enrollHardwareKey({
     required String keyAlias,
     required String signingServerUrl,
@@ -1758,7 +1987,11 @@ class C2pa {
   // Settings API
   // ===========================================================================
 
-  /// Load C2PA settings from a configuration string
+  /// Load C2PA settings applied to every reader and builder created without
+  /// a [C2paContext]. Later calls merge into the earlier settings.
+  ///
+  /// The native SDKs no longer have global settings; the plugin keeps these
+  /// and builds a context from them for each such reader or builder.
   ///
   /// The [format] should be "json" or "toml".
   Future<void> loadSettings(String settings, {String format = 'json'}) {
@@ -1783,7 +2016,6 @@ class C2pa {
       path,
       context._handle,
       options.detailed,
-      options.dataDir,
     );
     if (json == null) return null;
     return ManifestStoreInfo.fromJson(json);
@@ -1795,7 +2027,9 @@ class C2pa {
 
   /// Create a builder from a shared [C2paContext].
   ///
-  /// The context provides shared configuration for the builder.
+  /// The builder uses the context's settings and HTTP resolver, reports
+  /// progress through it, and signs with its signer when [ManifestBuilder.sign]
+  /// is called without one.
   Future<ManifestBuilder> createBuilderFromContext(
     C2paContext context,
     String manifestJson,
@@ -1807,10 +2041,10 @@ class C2pa {
     );
   }
 
-  /// Create a builder with custom [C2paSettings] and auto-validation.
+  /// Create a builder with custom [C2paSettings].
   ///
-  /// The settings provide configuration for the builder, and the manifest
-  /// JSON is automatically validated against the C2PA spec.
+  /// A signer defined in the settings (`signer.local` or `signer.remote`) is
+  /// used when [ManifestBuilder.sign] is called without a signer.
   Future<ManifestBuilder> createBuilderWithSettings(
     String manifestJson,
     C2paSettings settings,
@@ -1833,8 +2067,9 @@ class C2pa {
   ///
   /// Returns the PEM-encoded certificate chain.
   ///
-  /// Note: On iOS, this uses the CertificateManager from c2pa-ios.
-  /// On Android, availability depends on the native library.
+  /// **Platform note.** iOS uses the c2pa-swift `CertificateManager`.
+  /// c2pa-android has no equivalent, so Android throws
+  /// `NOT_IMPLEMENTED_ANDROID`.
   Future<String> createSelfSignedCertificateChain({
     required String keyAlias,
     CertificateConfig? config,

@@ -1,4 +1,4 @@
-/* 
+/*
 This file is licensed to you under the Apache License, Version 2.0
 (http://www.apache.org/licenses/LICENSE-2.0) or the MIT license
 (http://opensource.org/licenses/MIT), at your option.
@@ -10,1626 +10,663 @@ files for the specific language governing permissions and limitations under
 each license.
 */
 
+import C2PA
 import Flutter
 import UIKit
-import C2PA
 
-/// Stored settings entry for the handle-based settings API.
-/// Since the c2pa-ios library uses a global settings load rather than an
-/// object, we store the accumulated settings strings so they can be
-/// re-applied (merged) when creating signers or contexts.
+/// Flutter plugin bridging the Dart C2PA API to c2pa-swift.
 ///
-/// `currentJSON` tracks the most recently applied full JSON representation
-/// so that `settingsSetValue` can parse → modify → re-serialize → re-apply
-/// without depending on C2PASettings's private state. `setValue` normalizes
-/// to a full JSON load in the segments list, so chronological replay
-/// reproduces the final state.
-private struct SettingsEntry {
-    var segments: [(settings: String, format: String)]
-    var currentJSON: String
-}
-
+/// Threading model: every call that touches a builder, reader, settings or
+/// context runs on one serial worker queue, in the order Dart sent it. That
+/// keeps the main thread free while signing (callback signers, progress and
+/// HTTP resolvers call back into Dart on the main thread while the worker
+/// waits), and it means `builderDispose` can never free a builder that an
+/// earlier call is still using. Key management runs on a separate queue so a
+/// Dart signing callback can use it while the worker waits. `contextCancel`
+/// runs immediately, since it must reach an operation occupying the worker.
 public class C2paPlugin: NSObject, FlutterPlugin {
-    private var builders: [Int: Builder] = [:]
-    private var nextBuilderHandle: Int = 1
-    private let builderLock = NSLock()
+    private let worker = DispatchQueue(label: "org.guardianproject.c2pa.worker", qos: .userInitiated)
+    private let aux = DispatchQueue(label: "org.guardianproject.c2pa.aux", qos: .userInitiated, attributes: .concurrent)
 
-    private var settingsMap: [Int: SettingsEntry] = [:]
-    private var nextSettingsHandle: Int = 1
-    private let settingsLock = NSLock()
+    private let builders = HandleRegistry<Builder>()
+    private let settingsHandles = HandleRegistry<C2PASettings>()
+    private let contexts = HandleRegistry<C2PAContext>()
 
-    // Contexts wrap a settings handle reference on iOS
-    private var contexts: [Int: Int] = [:]  // contextHandle -> settingsHandle
-    private var nextContextHandle: Int = 1
-    private let contextLock = NSLock()
+    /// Settings applied by `loadSettings` to readers and builders created
+    /// without a context. Worker queue only.
+    private var defaultSettings: C2PASettings?
 
-    private var methodChannel: FlutterMethodChannel?
+    private let bridge = DartBridge()
+    private lazy var signers = SignerFactory(bridge: bridge)
+    private let keys = KeyManagement()
 
     public static func register(with registrar: FlutterPluginRegistrar) {
         let channel = FlutterMethodChannel(name: "org.guardianproject.c2pa", binaryMessenger: registrar.messenger())
         let instance = C2paPlugin()
-        instance.methodChannel = channel
+        instance.bridge.channel = channel
         registrar.addMethodCallDelegate(instance, channel: channel)
     }
+
+    private static let keyMethods: Set<String> = [
+        "isHardwareSigningAvailable", "createKey", "deleteKey", "keyExists",
+        "exportPublicKey", "importKey", "createCSR", "enrollHardwareKey",
+        "createSelfSignedCertificateChain",
+    ]
 
     public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         switch call.method {
         case "getPlatformVersion":
             result("iOS " + UIDevice.current.systemVersion)
-        case "getVersion":
-            handleGetVersion(result: result)
-        case "getSupportedReadMimeTypes":
-            handleGetSupportedReadMimeTypes(result: result)
-        case "getSupportedSignMimeTypes":
-            handleGetSupportedSignMimeTypes(result: result)
-        case "readFile":
-            handleReadFile(call: call, result: result)
-        case "readBytes":
-            handleReadBytes(call: call, result: result)
-        case "readFileDetailed":
-            handleReadFileDetailed(call: call, result: result)
-        case "readBytesDetailed":
-            handleReadBytesDetailed(call: call, result: result)
-        case "extractResource":
-            handleExtractResource(call: call, result: result)
-        case "readIngredientFile":
-            handleReadIngredientFile(call: call, result: result)
-        case "getRemoteUrl":
-            handleGetRemoteUrl(call: call, result: result)
-        case "isManifestEmbedded":
-            handleIsManifestEmbedded(call: call, result: result)
-        case "signBytes":
-            handleSignBytes(call: call, result: result)
-        case "signFile":
-            handleSignFile(call: call, result: result)
-        case "createBuilder":
-            handleCreateBuilder(call: call, result: result)
-        case "createBuilderFromArchive":
-            handleCreateBuilderFromArchive(call: call, result: result)
-        case "builderSetIntent":
-            handleBuilderSetIntent(call: call, result: result)
-        case "builderSetNoEmbed":
-            handleBuilderSetNoEmbed(call: call, result: result)
-        case "builderSetRemoteUrl":
-            handleBuilderSetRemoteUrl(call: call, result: result)
-        case "builderAddResource":
-            handleBuilderAddResource(call: call, result: result)
-        case "builderAddIngredient":
-            handleBuilderAddIngredient(call: call, result: result)
-        case "builderAddIngredientFromFile":
-            handleBuilderAddIngredientFromFile(call: call, result: result)
-        case "builderAddAction":
-            handleBuilderAddAction(call: call, result: result)
-        case "builderToArchive":
-            handleBuilderToArchive(call: call, result: result)
-        case "builderSign":
-            handleBuilderSign(call: call, result: result)
-        case "builderSignFile":
-            handleBuilderSignFile(call: call, result: result)
-        case "builderDispose":
-            handleBuilderDispose(call: call, result: result)
-        case "getSignerReserveSize":
-            handleGetSignerReserveSize(call: call, result: result)
-        case "loadSettings":
-            handleLoadSettings(call: call, result: result)
-        case "isHardwareSigningAvailable":
-            handleIsHardwareSigningAvailable(result: result)
-        case "createKey":
-            handleCreateKey(call: call, result: result)
-        case "deleteKey":
-            handleDeleteKey(call: call, result: result)
-        case "keyExists":
-            handleKeyExists(call: call, result: result)
-        case "exportPublicKey":
-            handleExportPublicKey(call: call, result: result)
-        // Settings Handle API
-        case "createSettings":
-            handleCreateSettings(result: result)
-        case "settingsUpdateFromString":
-            handleSettingsUpdateFromString(call: call, result: result)
-        case "settingsSetValue":
-            handleSettingsSetValue(call: call, result: result)
-        case "settingsDispose":
-            handleSettingsDispose(call: call, result: result)
-        // Context Handle API
-        case "createContext":
-            handleCreateContext(result: result)
-        case "createContextFromSettings":
-            handleCreateContextFromSettings(call: call, result: result)
-        case "contextDispose":
-            handleContextDispose(call: call, result: result)
-        // Enhanced Reader
-        case "readFileWithContext":
-            handleReadFileWithContext(call: call, result: result)
-        // Enhanced Builder
-        case "createBuilderWithContext":
-            handleCreateBuilderWithContext(call: call, result: result)
-        case "createBuilderWithSettings":
-            handleCreateBuilderWithSettings(call: call, result: result)
-        // Certificate Manager
-        case "createSelfSignedCertificateChain":
-            handleCreateSelfSignedCertificateChain(call: call, result: result)
-
-        case "createHashedPlaceholder",
-             "signHashedEmbeddable",
-             "formatEmbeddable":
-            result(FlutterError(
-                code: "NOT_IMPLEMENTED_IOS",
-                message: "\(call.method) is not yet implemented on iOS. " +
-                    "Blocked on c2pa-ios exposing Builder.dataHashedPlaceholder / " +
-                    "signDataHashedEmbeddable / format_embeddable_manifest as public Swift API.",
-                details: nil
-            ))
-        case "importKey",
-             "createCSR",
-             "enrollHardwareKey":
-            result(FlutterError(
-                code: "NOT_IMPLEMENTED_IOS",
-                message: "\(call.method) is not yet implemented on iOS (scheduled). " +
-                    "Flutter API is defined and Android works; iOS plugin handler pending.",
-                details: nil
-            ))
-
+        case "contextCancel":
+            respond(result, onMain: false) { try self.handleContextCancel(Args(call)) }
+        case let method where Self.keyMethods.contains(method):
+            aux.async { self.respond(result) { try self.handleKeyCall(call) } }
         default:
-            result(FlutterMethodNotImplemented)
+            worker.async { self.respond(result) { try self.handleWorkerCall(call) } }
         }
     }
 
-    // MARK: - Version and Info
+    // MARK: - Result plumbing
 
-    private func handleGetVersion(result: @escaping FlutterResult) {
-        result(C2PA.version)
-    }
-
-    private func handleGetSupportedReadMimeTypes(result: @escaping FlutterResult) {
-        let mimeTypes = [
-            "image/jpeg",
-            "image/png",
-            "image/webp",
-            "image/gif",
-            "image/tiff",
-            "image/heic",
-            "image/heif",
-            "image/avif",
-            "video/mp4",
-            "video/quicktime",
-            "audio/mp4",
-            "application/mp4",
-            "audio/mpeg",
-            "application/pdf",
-            "image/svg+xml"
-        ]
-        result(mimeTypes)
-    }
-
-    private func handleGetSupportedSignMimeTypes(result: @escaping FlutterResult) {
-        let mimeTypes = [
-            "image/jpeg",
-            "image/png",
-            "image/webp",
-            "image/gif",
-            "image/tiff",
-            "image/heic",
-            "image/heif",
-            "image/avif",
-            "video/mp4",
-            "video/quicktime",
-            "audio/mp4",
-            "application/mp4",
-            "audio/mpeg",
-            "application/pdf",
-            "image/svg+xml"
-        ]
-        result(mimeTypes)
-    }
-
-    // MARK: - Reader API
-
-    private func handleReadFile(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let path = args["path"] as? String else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "Path is required", details: nil))
-            return
-        }
-
+    private func respond(_ result: @escaping FlutterResult, onMain: Bool = true, _ block: () throws -> Any?) {
+        let outcome: Any?
         do {
-            let url = URL(fileURLWithPath: path)
-            let json = try C2PA.readFile(at: url, dataDir: nil)
-            result(json)
-        } catch {
-            result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
-        }
-    }
-
-    private func handleReadBytes(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let data = args["data"] as? FlutterStandardTypedData,
-              let mimeType = args["mimeType"] as? String else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "Data and mimeType are required", details: nil))
-            return
-        }
-
-        readBytesInternal(data: data.data, mimeType: mimeType, detailed: false, result: result)
-    }
-
-    private func handleReadFileDetailed(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let path = args["path"] as? String else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "Path is required", details: nil))
-            return
-        }
-
-        let dataDirPath = args["dataDir"] as? String
-        let dataDir = dataDirPath.map { URL(fileURLWithPath: $0) }
-
-        do {
-            let url = URL(fileURLWithPath: path)
-            let json = try C2PA.readFile(at: url, dataDir: dataDir)
-            result(json)
-        } catch {
-            result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
-        }
-    }
-
-    private func handleReadBytesDetailed(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let data = args["data"] as? FlutterStandardTypedData,
-              let mimeType = args["mimeType"] as? String else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "Data and mimeType are required", details: nil))
-            return
-        }
-
-        let detailed = args["detailed"] as? Bool ?? false
-        readBytesInternal(data: data.data, mimeType: mimeType, detailed: detailed, result: result)
-    }
-
-    private func readBytesInternal(data: Data, mimeType: String, detailed: Bool, result: @escaping FlutterResult) {
-        do {
-            let stream = try Stream(data: data)
-            let reader = try Reader(format: mimeType, stream: stream)
-            let json = detailed ? try reader.detailedJSON() : try reader.json()
-            result(json)
-        } catch {
-            result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
-        }
-    }
-
-    private func handleExtractResource(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let data = args["data"] as? FlutterStandardTypedData,
-              let mimeType = args["mimeType"] as? String,
-              let uri = args["uri"] as? String else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "Data, mimeType, and uri are required", details: nil))
-            return
-        }
-
-        do {
-            let sourceStream = try Stream(data: data.data)
-            let reader = try Reader(format: mimeType, stream: sourceStream)
-
-            var resourceData = Data()
-            let destStream = try Stream(
-                write: { buffer, count in
-                    resourceData.append(Data(bytes: buffer, count: count))
-                    return count
-                },
-                flush: { return 0 }
-            )
-
-            try reader.resource(uri: uri, to: destStream)
-            result(FlutterStandardTypedData(bytes: resourceData))
-        } catch {
-            result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
-        }
-    }
-
-    private func handleReadIngredientFile(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let path = args["path"] as? String else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "Path is required", details: nil))
-            return
-        }
-
-        let dataDirPath = args["dataDir"] as? String
-        let dataDir = dataDirPath.map { URL(fileURLWithPath: $0) }
-
-        do {
-            let url = URL(fileURLWithPath: path)
-            let json = try C2PA.readIngredient(at: url, dataDir: dataDir)
-            result(json)
-        } catch {
-            result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
-        }
-    }
-
-    private func handleGetRemoteUrl(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let path = args["path"] as? String else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "Path is required", details: nil))
-            return
-        }
-
-        let mimeType = (args["mimeType"] as? String)
-            ?? mimeTypeForExtension((path as NSString).pathExtension.lowercased())
-
-        do {
-            let stream = try Stream(readFrom: URL(fileURLWithPath: path))
-            let reader = try Reader(format: mimeType, stream: stream)
-            result(reader.remote()?.absoluteString)
-        } catch {
-            result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
-        }
-    }
-
-    private func handleIsManifestEmbedded(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let path = args["path"] as? String else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "Path is required", details: nil))
-            return
-        }
-
-        let mimeType = (args["mimeType"] as? String)
-            ?? mimeTypeForExtension((path as NSString).pathExtension.lowercased())
-
-        do {
-            let stream = try Stream(readFrom: URL(fileURLWithPath: path))
-            let reader = try Reader(format: mimeType, stream: stream)
-            result(reader.isEmbedded())
-        } catch {
-            result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
-        }
-    }
-
-    // MARK: - Signer Creation
-
-    private func createSigner(_ signerMap: [String: Any], result: @escaping FlutterResult, completion: @escaping (Signer) -> Void) {
-        let signerType = signerMap["type"] as? String ?? "pem"
-
-        do {
-            switch signerType {
-            case "pem":
-                let signer = try createPemSigner(signerMap)
-                completion(signer)
-
-            case "keystore":
-                let signer = try createKeychainSigner(signerMap)
-                completion(signer)
-
-            case "hardware":
-                let signer = try createSecureEnclaveSigner(signerMap)
-                completion(signer)
-
-            case "callback":
-                let signer = try createCallbackSigner(signerMap)
-                completion(signer)
-
-            case "settings":
-                let signer = try createSettingsSigner(signerMap)
-                completion(signer)
-
-            case "remote":
-                createRemoteSigner(signerMap) { signerResult in
-                    switch signerResult {
-                    case .success(let signer):
-                        completion(signer)
-                    case .failure(let error):
-                        result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
-                    }
-                }
-
-            default:
-                result(FlutterError(code: "INVALID_ARGUMENT", message: "Unknown signer type: \(signerType)", details: nil))
-            }
-        } catch {
-            result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
-        }
-    }
-
-    private func createPemSigner(_ signerMap: [String: Any]) throws -> Signer {
-        guard let algorithmStr = signerMap["algorithm"] as? String,
-              let certificatePem = signerMap["certificatePem"] as? String,
-              let privateKeyPem = signerMap["privateKeyPem"] as? String else {
-            throw C2PAError.api("Invalid PEM signer configuration")
-        }
-
-        let tsaUrl = (signerMap["tsaUrl"] as? String).flatMap(URL.init(string:))
-        let algorithm = mapAlgorithm(algorithmStr)
-
-        return try Signer(
-            certsPEM: certificatePem,
-            privateKeyPEM: privateKeyPem,
-            algorithm: algorithm,
-            tsa: tsaUrl
-        )
-    }
-
-    private func createKeychainSigner(_ signerMap: [String: Any]) throws -> Signer {
-        guard let algorithmStr = signerMap["algorithm"] as? String,
-              let certificateChainPem = signerMap["certificateChainPem"] as? String,
-              let keyAlias = signerMap["keyAlias"] as? String else {
-            throw C2PAError.api("Invalid keychain signer configuration")
-        }
-
-        let tsaUrl = (signerMap["tsaUrl"] as? String).flatMap(URL.init(string:))
-        let algorithm = mapAlgorithm(algorithmStr)
-
-        return try Signer(
-            algorithm: algorithm,
-            certificateChainPEM: certificateChainPem,
-            tsa: tsaUrl,
-            keychainKeyTag: keyAlias
-        )
-    }
-
-    private func createSecureEnclaveSigner(_ signerMap: [String: Any]) throws -> Signer {
-        guard let certificateChainPem = signerMap["certificateChainPem"] as? String,
-              let keyAlias = signerMap["keyAlias"] as? String else {
-            throw C2PAError.api("Invalid Secure Enclave signer configuration")
-        }
-
-        let tsaUrl = (signerMap["tsaUrl"] as? String).flatMap(URL.init(string:))
-        let requireUserAuth = signerMap["requireUserAuthentication"] as? Bool ?? false
-
-        var accessControl: SecAccessControlCreateFlags = [.privateKeyUsage]
-        if requireUserAuth {
-            accessControl.insert(.biometryCurrentSet)
-        }
-
-        let config = SecureEnclaveSignerConfig(
-            keyTag: keyAlias,
-            accessControl: accessControl
-        )
-
-        return try Signer(
-            algorithm: .es256,
-            certificateChainPEM: certificateChainPem,
-            tsa: tsaUrl,
-            secureEnclaveConfig: config
-        )
-    }
-
-    private func createCallbackSigner(_ signerMap: [String: Any]) throws -> Signer {
-        guard let algorithmStr = signerMap["algorithm"] as? String,
-              let certificateChainPem = signerMap["certificateChainPem"] as? String,
-              let callbackId = signerMap["callbackId"] as? String else {
-            throw C2PAError.api("Invalid callback signer configuration")
-        }
-
-        let tsaUrl = (signerMap["tsaUrl"] as? String).flatMap(URL.init(string:))
-        let algorithm = mapAlgorithm(algorithmStr)
-
-        return try Signer(
-            algorithm: algorithm,
-            certificateChainPEM: certificateChainPem,
-            tsa: tsaUrl
-        ) { [weak self] dataToSign in
-            guard let self = self, let channel = self.methodChannel else {
-                throw C2PAError.api("Method channel not available")
-            }
-
-            let semaphore = DispatchSemaphore(value: 0)
-            var signatureResult: Result<Data, Error>?
-
-            DispatchQueue.main.async {
-                channel.invokeMethod("signCallback", arguments: [
-                    "callbackId": callbackId,
-                    "data": FlutterStandardTypedData(bytes: dataToSign)
-                ]) { response in
-                    if let error = response as? FlutterError {
-                        signatureResult = .failure(C2PAError.api(error.message ?? "Callback signing failed"))
-                    } else if let signatureData = response as? FlutterStandardTypedData {
-                        signatureResult = .success(signatureData.data)
-                    } else {
-                        signatureResult = .failure(C2PAError.api("Invalid callback response"))
-                    }
-                    semaphore.signal()
-                }
-            }
-
-            semaphore.wait()
-
-            switch signatureResult {
-            case .success(let data):
-                return data
-            case .failure(let error):
-                throw error
-            case .none:
-                throw C2PAError.api("Callback signing failed")
-            }
-        }
-    }
-
-    private func createRemoteSigner(_ signerMap: [String: Any], completion: @escaping (Result<Signer, Error>) -> Void) {
-        guard let configurationUrl = signerMap["configurationUrl"] as? String,
-              let configurationEndpoint = URL(string: configurationUrl) else {
-            completion(.failure(C2PAError.api("Invalid remote signer configuration")))
-            return
-        }
-
-        let bearerToken = signerMap["bearerToken"] as? String
-        let customHeaders = signerMap["customHeaders"] as? [String: String] ?? [:]
-
-        let webServiceSigner = WebServiceSigner(
-            configurationEndpoint: configurationEndpoint,
-            bearerToken: bearerToken,
-            headers: customHeaders
-        )
-
-        Task { @MainActor in
-            do {
-                let signer = try await webServiceSigner.createSigner()
-                completion(.success(signer))
-            } catch {
-                completion(.failure(error))
-            }
-        }
-    }
-
-    private func createSettingsSigner(_ signerMap: [String: Any]) throws -> Signer {
-        guard let settings = signerMap["settings"] as? String else {
-            throw C2PAError.api("Invalid settings signer configuration: settings string required")
-        }
-
-        let format = signerMap["format"] as? String ?? "json"
-
-        switch format.lowercased() {
-        case "json":
-            return try Signer(settingsJSON: settings)
-        case "toml":
-            return try Signer(settingsTOML: settings)
-        default:
-            throw C2PAError.api("Unsupported settings format: \(format). Use 'json' or 'toml'.")
-        }
-    }
-
-    // MARK: - Sign API
-
-    private func handleSignBytes(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let sourceData = args["sourceData"] as? FlutterStandardTypedData,
-              let mimeType = args["mimeType"] as? String,
-              let manifestJson = args["manifestJson"] as? String,
-              let signerMap = args["signer"] as? [String: Any] else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "sourceData, mimeType, manifestJson, and signer are required", details: nil))
-            return
-        }
-
-        createSigner(signerMap, result: result) { signer in
-            self.performSignBytes(sourceData: sourceData.data, mimeType: mimeType, manifestJson: manifestJson, signer: signer, result: result)
-        }
-    }
-
-    private func performSignBytes(sourceData: Data, mimeType: String, manifestJson: String, signer: Signer, result: @escaping FlutterResult) {
-        do {
-            let builder = try Builder(manifestJSON: manifestJson)
-            let sourceStream = try Stream(data: sourceData)
-
-            let tempDir = FileManager.default.temporaryDirectory
-            let destUrl = tempDir.appendingPathComponent(UUID().uuidString)
-            defer { try? FileManager.default.removeItem(at: destUrl) }
-
-            let destStream = try Stream(writeTo: destUrl)
-
-            let manifestBytes = try builder.sign(
-                format: mimeType,
-                source: sourceStream,
-                destination: destStream,
-                signer: signer
-            )
-
-            let destData = try Data(contentsOf: destUrl)
-
-            let resultMap: [String: Any?] = [
-                "signedData": FlutterStandardTypedData(bytes: destData),
-                "manifestBytes": FlutterStandardTypedData(bytes: manifestBytes),
-                "manifestSize": manifestBytes.count
-            ]
-
-            result(resultMap)
-        } catch {
-            result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
-        }
-    }
-
-    private func handleSignFile(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let sourcePath = args["sourcePath"] as? String,
-              let destPath = args["destPath"] as? String,
-              let manifestJson = args["manifestJson"] as? String,
-              let signerMap = args["signer"] as? [String: Any] else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "sourcePath, destPath, manifestJson, and signer are required", details: nil))
-            return
-        }
-
-        createSigner(signerMap, result: result) { signer in
-            do {
-                let builder = try Builder(manifestJSON: manifestJson)
-                let sourceStream = try Stream(readFrom: URL(fileURLWithPath: sourcePath))
-                let destStream = try Stream(writeTo: URL(fileURLWithPath: destPath))
-
-                let mimeType = self.mimeTypeForExtension((sourcePath as NSString).pathExtension.lowercased())
-
-                try builder.sign(
-                    format: mimeType,
-                    source: sourceStream,
-                    destination: destStream,
-                    signer: signer
-                )
-
-                result(nil)
-            } catch {
-                result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
-            }
-        }
-    }
-
-    // MARK: - Builder API
-
-    private func handleCreateBuilder(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let manifestJson = args["manifestJson"] as? String else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "manifestJson is required", details: nil))
-            return
-        }
-
-        do {
-            let builder = try Builder(manifestJSON: manifestJson)
-            let handle = storeBuilder(builder)
-            result(handle)
-        } catch {
-            result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
-        }
-    }
-
-    private func handleCreateBuilderFromArchive(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let archiveData = args["archiveData"] as? FlutterStandardTypedData else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "archiveData is required", details: nil))
-            return
-        }
-
-        do {
-            let stream = try Stream(data: archiveData.data)
-            let builder = try Builder(archiveStream: stream)
-            let handle = storeBuilder(builder)
-            result(handle)
-        } catch {
-            result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
-        }
-    }
-
-    private func handleBuilderSetIntent(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let handle = args["handle"] as? Int,
-              let intentStr = args["intent"] as? String else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "handle and intent are required", details: nil))
-            return
-        }
-
-        guard let builder = getBuilder(handle) else {
-            result(FlutterError(code: "INVALID_HANDLE", message: "Builder not found", details: nil))
-            return
-        }
-
-        do {
-            let digitalSourceTypeStr = args["digitalSourceType"] as? String
-            let intent = mapIntent(intentStr, digitalSourceType: digitalSourceTypeStr)
-            try builder.setIntent(intent)
-            result(nil)
-        } catch {
-            result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
-        }
-    }
-
-    private func handleBuilderSetNoEmbed(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let handle = args["handle"] as? Int else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "handle is required", details: nil))
-            return
-        }
-
-        guard let builder = getBuilder(handle) else {
-            result(FlutterError(code: "INVALID_HANDLE", message: "Builder not found", details: nil))
-            return
-        }
-
-        builder.setNoEmbed()
-        result(nil)
-    }
-
-    private func handleBuilderSetRemoteUrl(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let handle = args["handle"] as? Int,
-              let url = args["url"] as? String,
-              let remoteURL = URL(string: url) else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "handle and url are required", details: nil))
-            return
-        }
-
-        guard let builder = getBuilder(handle) else {
-            result(FlutterError(code: "INVALID_HANDLE", message: "Builder not found", details: nil))
-            return
-        }
-
-        do {
-            try builder.setRemote(url: remoteURL)
-            result(nil)
-        } catch {
-            result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
-        }
-    }
-
-    private func handleBuilderAddResource(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let handle = args["handle"] as? Int,
-              let uri = args["uri"] as? String,
-              let data = args["data"] as? FlutterStandardTypedData else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "handle, uri, and data are required", details: nil))
-            return
-        }
-
-        guard let builder = getBuilder(handle) else {
-            result(FlutterError(code: "INVALID_HANDLE", message: "Builder not found", details: nil))
-            return
-        }
-
-        do {
-            let stream = try Stream(data: data.data)
-            try builder.addResource(uri: uri, stream: stream)
-            result(nil)
-        } catch {
-            result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
-        }
-    }
-
-    private func handleBuilderAddIngredient(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let handle = args["handle"] as? Int,
-              let data = args["data"] as? FlutterStandardTypedData,
-              let mimeType = args["mimeType"] as? String else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "handle, data, and mimeType are required", details: nil))
-            return
-        }
-
-        guard let builder = getBuilder(handle) else {
-            result(FlutterError(code: "INVALID_HANDLE", message: "Builder not found", details: nil))
-            return
-        }
-
-        let ingredientJson = args["ingredientJson"] as? String ?? "{}"
-
-        do {
-            let stream = try Stream(data: data.data)
-            try builder.addIngredient(json: ingredientJson, format: mimeType, from: stream)
-            result(nil)
-        } catch {
-            result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
-        }
-    }
-
-    private func handleBuilderAddIngredientFromFile(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let handle = args["handle"] as? Int,
-              let path = args["path"] as? String else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "handle and path are required", details: nil))
-            return
-        }
-
-        guard let builder = getBuilder(handle) else {
-            result(FlutterError(code: "INVALID_HANDLE", message: "Builder not found", details: nil))
-            return
-        }
-
-        let ingredientJson = args["ingredientJson"] as? String ?? "{}"
-        let ext = (path as NSString).pathExtension.lowercased()
-        let mimeType = mimeTypeForExtension(ext)
-
-        do {
-            let stream = try Stream(readFrom: URL(fileURLWithPath: path))
-            try builder.addIngredient(json: ingredientJson, format: mimeType, from: stream)
-            result(nil)
-        } catch {
-            result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
-        }
-    }
-
-    private func handleBuilderAddAction(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let handle = args["handle"] as? Int,
-              let actionJson = args["actionJson"] as? String else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "handle and actionJson are required", details: nil))
-            return
-        }
-
-        guard let builder = getBuilder(handle) else {
-            result(FlutterError(code: "INVALID_HANDLE", message: "Builder not found", details: nil))
-            return
-        }
-
-        do {
-            if let actionData = actionJson.data(using: .utf8),
-               let actionDict = try JSONSerialization.jsonObject(with: actionData) as? [String: Any],
-               let actionName = actionDict["action"] as? String {
-                let digitalSourceTypeStr = actionDict["digitalSourceType"] as? String
-                let parameters = (actionDict["parameters"] as? [String: Any])?
-                    .mapValues { AnyCodable($0) }
-                let action = Action(
-                    action: actionName,
-                    digitalSourceType: digitalSourceTypeStr,
-                    softwareAgent: actionDict["softwareAgent"] as? String,
-                    parameters: parameters
-                )
-                try builder.addAction(action)
-            }
-            result(nil)
-        } catch {
-            result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
-        }
-    }
-
-    private func handleBuilderToArchive(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let handle = args["handle"] as? Int else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "handle is required", details: nil))
-            return
-        }
-
-        guard let builder = getBuilder(handle) else {
-            result(FlutterError(code: "INVALID_HANDLE", message: "Builder not found", details: nil))
-            return
-        }
-
-        do {
-            var archiveData = Data()
-            let stream = try Stream(
-                write: { buffer, count in
-                    archiveData.append(Data(bytes: buffer, count: count))
-                    return count
-                },
-                flush: { return 0 }
-            )
-
-            try builder.writeArchive(to: stream)
-            result(FlutterStandardTypedData(bytes: archiveData))
-        } catch {
-            result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
-        }
-    }
-
-    private func handleBuilderSign(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let handle = args["handle"] as? Int,
-              let sourceData = args["sourceData"] as? FlutterStandardTypedData,
-              let mimeType = args["mimeType"] as? String,
-              let signerMap = args["signer"] as? [String: Any] else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "handle, sourceData, mimeType, and signer are required", details: nil))
-            return
-        }
-
-        guard let builder = getBuilder(handle) else {
-            result(FlutterError(code: "INVALID_HANDLE", message: "Builder not found", details: nil))
-            return
-        }
-
-        let signerType = signerMap["type"] as? String ?? "pem"
-        let needsBackgroundQueue = signerType == "callback" || signerType == "remote"
-
-        createSigner(signerMap, result: result) { signer in
-            let signingWork = {
-                do {
-                    let sourceStream = try Stream(data: sourceData.data)
-
-                    let tempDir = FileManager.default.temporaryDirectory
-                    let destUrl = tempDir.appendingPathComponent(UUID().uuidString)
-                    defer { try? FileManager.default.removeItem(at: destUrl) }
-
-                    let destStream = try Stream(writeTo: destUrl)
-
-                    let manifestBytes = try builder.sign(
-                        format: mimeType,
-                        source: sourceStream,
-                        destination: destStream,
-                        signer: signer
-                    )
-
-                    let destData = try Data(contentsOf: destUrl)
-
-                    let resultMap: [String: Any?] = [
-                        "signedData": FlutterStandardTypedData(bytes: destData),
-                        "manifestBytes": FlutterStandardTypedData(bytes: manifestBytes),
-                        "manifestSize": manifestBytes.count
-                    ]
-
-                    DispatchQueue.main.async {
-                        result(resultMap)
-                    }
-                } catch {
-                    DispatchQueue.main.async {
-                        result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
-                    }
-                }
-            }
-
-            if needsBackgroundQueue {
-                DispatchQueue.global(qos: .userInitiated).async {
-                    signingWork()
-                }
+            let value = try block()
+            if value is NotImplementedMarker {
+                outcome = FlutterMethodNotImplemented
+            } else if let data = value as? Data {
+                outcome = FlutterStandardTypedData(bytes: data)
             } else {
-                signingWork()
+                outcome = value
             }
-        }
-    }
-
-    private func handleBuilderSignFile(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let handle = args["handle"] as? Int,
-              let sourcePath = args["sourcePath"] as? String,
-              let destPath = args["destPath"] as? String,
-              let signerMap = args["signer"] as? [String: Any] else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "handle, sourcePath, destPath, and signer are required", details: nil))
-            return
-        }
-
-        guard let builder = getBuilder(handle) else {
-            result(FlutterError(code: "INVALID_HANDLE", message: "Builder not found", details: nil))
-            return
-        }
-
-        let signerType = signerMap["type"] as? String ?? "pem"
-        let needsBackgroundQueue = signerType == "callback" || signerType == "remote"
-
-        createSigner(signerMap, result: result) { signer in
-            let signingWork = {
-                do {
-                    let mimeType = self.mimeTypeForExtension((sourcePath as NSString).pathExtension.lowercased())
-                    let sourceStream = try Stream(readFrom: URL(fileURLWithPath: sourcePath))
-                    let destStream = try Stream(writeTo: URL(fileURLWithPath: destPath))
-
-                    try builder.sign(
-                        format: mimeType,
-                        source: sourceStream,
-                        destination: destStream,
-                        signer: signer
-                    )
-
-                    DispatchQueue.main.async {
-                        result(nil)
-                    }
-                } catch {
-                    DispatchQueue.main.async {
-                        result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
-                    }
-                }
-            }
-
-            if needsBackgroundQueue {
-                DispatchQueue.global(qos: .userInitiated).async {
-                    signingWork()
-                }
-            } else {
-                signingWork()
-            }
-        }
-    }
-
-    private func handleBuilderDispose(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let handle = args["handle"] as? Int else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "handle is required", details: nil))
-            return
-        }
-
-        removeBuilder(handle)
-        result(nil)
-    }
-
-    // MARK: - Signer Utilities
-
-    private func handleGetSignerReserveSize(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let signerMap = args["signer"] as? [String: Any] else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "signer is required", details: nil))
-            return
-        }
-
-        createSigner(signerMap, result: result) { signer in
-            do {
-                let reserveSize = try signer.reserveSize()
-                result(reserveSize)
-            } catch {
-                result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
-            }
-        }
-    }
-
-    private func handleLoadSettings(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let settings = args["settings"] as? String,
-              let format = args["format"] as? String else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "settings and format are required", details: nil))
-            return
-        }
-
-        guard let settingsFormat = Signer.SettingsFormat(rawValue: format.lowercased()) else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "format must be 'json' or 'toml'", details: nil))
-            return
-        }
-
-        do {
-            try Signer.loadSettings(settings, format: settingsFormat)
-            result(nil)
-        } catch {
-            result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
-        }
-    }
-
-    // MARK: - Settings Handle API
-
-    private func handleCreateSettings(result: @escaping FlutterResult) {
-        let handle = storeSettings(SettingsEntry(segments: [], currentJSON: "{\"version\":1}"))
-        result(handle)
-    }
-
-    private func handleSettingsUpdateFromString(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let handle = args["handle"] as? Int,
-              let settings = args["settings"] as? String,
-              let format = args["format"] as? String else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "handle, settings, and format are required", details: nil))
-            return
-        }
-
-        guard let settingsFormat = Signer.SettingsFormat(rawValue: format.lowercased()) else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "format must be 'json' or 'toml'", details: nil))
-            return
-        }
-
-        settingsLock.lock()
-        guard settingsMap[handle] != nil else {
-            settingsLock.unlock()
-            result(FlutterError(code: "INVALID_HANDLE", message: "Settings not found", details: nil))
-            return
-        }
-        settingsMap[handle]!.segments.append((settings: settings, format: settingsFormat.rawValue))
-        if settingsFormat == .json {
-            settingsMap[handle]!.currentJSON = settings
-        }
-        settingsLock.unlock()
-
-        // Also apply the settings globally so they take effect immediately
-        do {
-            try Signer.loadSettings(settings, format: settingsFormat)
-            result(nil)
-        } catch {
-            result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
-        }
-    }
-
-    private func handleSettingsSetValue(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let handle = args["handle"] as? Int,
-              let path = args["path"] as? String else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "handle and path are required", details: nil))
-            return
-        }
-        let value: Any = args["value"] ?? NSNull()
-
-        settingsLock.lock()
-        guard var entry = settingsMap[handle] else {
-            settingsLock.unlock()
-            result(FlutterError(code: "INVALID_HANDLE", message: "Settings not found", details: nil))
-            return
-        }
-        let currentJSON = entry.currentJSON
-        settingsLock.unlock()
-
-        do {
-            guard let data = currentJSON.data(using: .utf8),
-                  var dict = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                throw C2PAError.api("Current settings are not a valid JSON object")
-            }
-
-            let components = path.split(separator: ".").map(String.init)
-            guard !components.isEmpty else {
-                throw C2PAError.api("Path must not be empty")
-            }
-            Self.setNestedValue(&dict, components: components, value: value)
-
-            let updatedData = try JSONSerialization.data(withJSONObject: dict)
-            guard let updatedString = String(data: updatedData, encoding: .utf8) else {
-                throw C2PAError.utf8
-            }
-
-            try Signer.loadSettings(updatedString, format: .json)
-
-            settingsLock.lock()
-            entry = settingsMap[handle] ?? entry
-            entry.currentJSON = updatedString
-            entry.segments.append((settings: updatedString, format: "json"))
-            settingsMap[handle] = entry
-            settingsLock.unlock()
-
-            result(nil)
+        } catch let error as PluginError {
+            outcome = FlutterError(code: error.code, message: error.message, details: nil)
         } catch let error as C2PAError {
-            result(FlutterError(code: "C2PA_ERROR", message: error.errorDescription, details: nil))
+            outcome = FlutterError(code: "C2PA_ERROR", message: error.errorDescription ?? "\(error)", details: nil)
         } catch {
-            result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
+            outcome = FlutterError(code: "ERROR", message: error.localizedDescription, details: nil)
         }
-    }
-
-    private static func setNestedValue(_ dict: inout [String: Any], components: [String], value: Any) {
-        guard let key = components.first else { return }
-        if components.count == 1 {
-            dict[key] = value
+        if onMain {
+            DispatchQueue.main.async { result(outcome) }
         } else {
-            var nested = dict[key] as? [String: Any] ?? [:]
-            setNestedValue(&nested, components: Array(components.dropFirst()), value: value)
-            dict[key] = nested
+            result(outcome)
         }
     }
 
-    private func handleSettingsDispose(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let handle = args["handle"] as? Int else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "handle is required", details: nil))
-            return
-        }
+    // MARK: - Dispatch
 
-        removeSettings(handle)
-        result(nil)
+    private func handleKeyCall(_ call: FlutterMethodCall) throws -> Any? {
+        let args = Args(call)
+        switch call.method {
+        case "isHardwareSigningAvailable": return keys.isHardwareSigningAvailable()
+        case "createKey": try keys.createKey(args); return nil
+        case "deleteKey": return try keys.deleteKey(args)
+        case "keyExists": return try keys.keyExists(args)
+        case "exportPublicKey": return try keys.exportPublicKey(args)
+        case "importKey": try keys.importKey(args); return nil
+        case "createCSR": return try keys.createCSR(args)
+        case "enrollHardwareKey": return try keys.enrollHardwareKey(args)
+        case "createSelfSignedCertificateChain": return try keys.createSelfSignedCertificateChain(args)
+        default: return NotImplementedMarker()
+        }
     }
 
-    // MARK: - Context Handle API
+    // swiftlint:disable:next cyclomatic_complexity function_body_length
+    private func handleWorkerCall(_ call: FlutterMethodCall) throws -> Any? {
+        let args = Args(call)
+        switch call.method {
+        case "getVersion":
+            return C2PA.version
 
-    private func handleCreateContext(result: @escaping FlutterResult) {
-        // Create an empty settings entry to back this context
-        let settingsHandle = storeSettings(SettingsEntry(segments: [], currentJSON: "{\"version\":1}"))
-        let contextHandle = storeContext(settingsHandle: settingsHandle)
-        result(contextHandle)
-    }
+        // Reader
+        case "readFile":
+            return try readFromPath(args, output: "json")
+        case "readBytes":
+            return try readFromBytes(args, output: "json")
+        case "readFileDetailed", "readFileWithContext":
+            return try readFromPath(args, output: (args.opt("detailed") ?? false) ? "detailed" : "json")
+        case "readBytesDetailed":
+            return try readFromBytes(args, output: (args.opt("detailed") ?? false) ? "detailed" : "json")
+        case "readCrJson":
+            return args.optData("data") != nil
+                ? try readFromBytes(args, output: "crJson")
+                : try readFromPath(args, output: "crJson")
+        case "readWithManifest":
+            return try handleReadWithManifest(args)
+        case "readFragment":
+            throw PluginError.notImplemented("Fragmented BMFF reading is not available in c2pa-swift")
+        case "extractResource":
+            return try handleExtractResource(args)
+        case "getRemoteUrl":
+            return try withPathReader(args) { $0.remote()?.absoluteString }
+        case "isManifestEmbedded":
+            return try withPathReader(args) { $0.isEmbedded() }
+        case "getSupportedReadMimeTypes":
+            return Reader.supportedMimeTypes
+        case "getSupportedSignMimeTypes":
+            return Builder.supportedMimeTypes
 
-    private func handleCreateContextFromSettings(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let settingsHandle = args["settingsHandle"] as? Int else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "settingsHandle is required", details: nil))
-            return
-        }
+        // One-shot signing
+        case "signBytes":
+            return try handleSignBytes(args)
+        case "signFile":
+            try handleSignFile(args)
+            return nil
+        case "getSignerReserveSize":
+            return try signers.create(try args.req("signer")).reserveSize()
+        case "composeManifest":
+            return try Builder.composeManifest(try args.reqData("manifestBytes"), format: try args.req("mimeType"))
 
-        settingsLock.lock()
-        let settingsExist = settingsMap[settingsHandle] != nil
-        settingsLock.unlock()
-
-        guard settingsExist else {
-            result(FlutterError(code: "INVALID_HANDLE", message: "Settings not found", details: nil))
-            return
-        }
-
-        let contextHandle = storeContext(settingsHandle: settingsHandle)
-        result(contextHandle)
-    }
-
-    private func handleContextDispose(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let handle = args["handle"] as? Int else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "handle is required", details: nil))
-            return
-        }
-
-        removeContext(handle)
-        result(nil)
-    }
-
-    // MARK: - Enhanced Reader
-
-    private func handleReadFileWithContext(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let path = args["path"] as? String else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "path is required", details: nil))
-            return
-        }
-
-        let contextHandle = args["contextHandle"] as? Int
-        let detailed = args["detailed"] as? Bool ?? false
-        let dataDirPath = args["dataDir"] as? String
-        let dataDir = dataDirPath.map { URL(fileURLWithPath: $0) }
-
-        // Apply settings from context if provided
-        if let contextHandle = contextHandle {
-            do {
-                try applyContextSettings(contextHandle)
-            } catch {
-                result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
-                return
+        // Builder lifecycle
+        case "createBuilder":
+            return builders.store(try newBuilder(args.optInt("contextHandle"), try args.req("manifestJson")))
+        case "createBuilderWithContext":
+            return builders.store(try newBuilder(try args.reqInt("contextHandle"), try args.req("manifestJson")))
+        case "createBuilderWithSettings":
+            let context = try C2PAContext(settings: try settingsFor(try args.reqInt("settingsHandle")))
+            return builders.store(try Builder(context: context, manifestJSON: try args.req("manifestJson")))
+        case "createBuilderFromArchive":
+            let stream = try Stream(data: try args.reqData("archiveData"))
+            if let context = try contextFor(args.optInt("contextHandle")) {
+                return builders.store(try Builder(context: context, archiveStream: stream))
             }
-        }
+            return builders.store(try Builder(archiveStream: stream))
+        case "builderDispose":
+            builders.remove(try args.reqInt("handle"))
+            return nil
 
-        do {
-            if detailed {
-                // Use the Reader API for detailed output
-                let ext = (path as NSString).pathExtension.lowercased()
-                let mimeType = mimeTypeForExtension(ext)
-                let stream = try Stream(readFrom: URL(fileURLWithPath: path))
-                let reader = try Reader(format: mimeType, stream: stream)
-                let json = try reader.detailedJSON()
-                result(json)
-            } else {
-                let url = URL(fileURLWithPath: path)
-                let json = try C2PA.readFile(at: url, dataDir: dataDir)
-                result(json)
+        // Builder configuration
+        case "builderSetIntent":
+            try handleSetIntent(args)
+            return nil
+        case "builderSetNoEmbed":
+            try builder(args).setNoEmbed()
+            return nil
+        case "builderSetRemoteUrl":
+            let urlString: String = try args.req("url")
+            guard let url = URL(string: urlString) else {
+                throw PluginError.invalidArgument("Invalid url: \(urlString)")
             }
-        } catch {
-            result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
-        }
-    }
-
-    // MARK: - Enhanced Builder
-
-    private func handleCreateBuilderWithContext(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let contextHandle = args["contextHandle"] as? Int,
-              let manifestJson = args["manifestJson"] as? String else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "contextHandle and manifestJson are required", details: nil))
-            return
-        }
-
-        // Apply settings from context before creating builder
-        do {
-            try applyContextSettings(contextHandle)
-            let builder = try Builder(manifestJSON: manifestJson)
-            let handle = storeBuilder(builder)
-            result(handle)
-        } catch {
-            result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
-        }
-    }
-
-    private func handleCreateBuilderWithSettings(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let manifestJson = args["manifestJson"] as? String,
-              let settingsHandle = args["settingsHandle"] as? Int else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "manifestJson and settingsHandle are required", details: nil))
-            return
-        }
-
-        // Apply settings before creating builder
-        do {
-            try applySettingsFromHandle(settingsHandle)
-            let builder = try Builder(manifestJSON: manifestJson)
-            let handle = storeBuilder(builder)
-            result(handle)
-        } catch {
-            result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
-        }
-    }
-
-    // MARK: - Certificate Manager
-
-    private func handleCreateSelfSignedCertificateChain(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let keyAlias = args["keyAlias"] as? String else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "keyAlias is required", details: nil))
-            return
-        }
-
-        let configMap = args["config"] as? [String: Any]
-
-        let config = CertificateManager.CertificateConfig(
-            commonName: configMap?["commonName"] as? String ?? "C2PA Signer",
-            organization: configMap?["organization"] as? String ?? "Unknown",
-            organizationalUnit: configMap?["organizationalUnit"] as? String ?? "",
-            country: configMap?["country"] as? String ?? "US",
-            state: configMap?["state"] as? String ?? "",
-            locality: configMap?["locality"] as? String ?? "",
-            emailAddress: configMap?["emailAddress"] as? String,
-            validityDays: configMap?["validityDays"] as? Int ?? 365
-        )
-
-        do {
-            // Look up the public key from the keychain using the key alias
-            let query: [String: Any] = [
-                kSecClass as String: kSecClassKey,
-                kSecAttrApplicationTag as String: keyAlias,
-                kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
-                kSecReturnRef as String: true
-            ]
-
-            var item: CFTypeRef?
-            let status = SecItemCopyMatching(query as CFDictionary, &item)
-
-            guard status == errSecSuccess,
-                  let privateKey = item as! SecKey? else {
-                result(FlutterError(code: "ERROR", message: "Failed to find key '\(keyAlias)' in keychain: \(status)", details: nil))
-                return
-            }
-
-            guard let publicKey = SecKeyCopyPublicKey(privateKey) else {
-                result(FlutterError(code: "ERROR", message: "Failed to extract public key from private key", details: nil))
-                return
-            }
-
-            let certChainPem = try CertificateManager.createSelfSignedCertificateChain(
-                for: publicKey,
-                config: config
+            try builder(args).setRemote(url: url)
+            return nil
+        case "builderSetBasePath":
+            try builder(args).setBasePath(fileURL(try args.req("path")))
+            return nil
+        case "builderAddResource":
+            try builder(args).addResource(uri: try args.req("uri"), stream: try Stream(data: try args.reqData("data")))
+            return nil
+        case "builderAddIngredient":
+            try builder(args).addIngredient(
+                json: args.opt("ingredientJson") ?? "{}",
+                format: try args.req("mimeType"),
+                from: try Stream(data: try args.reqData("data"))
             )
+            return nil
+        case "builderAddIngredientFromFile":
+            let path: String = try args.req("path")
+            try builder(args).addIngredient(
+                json: args.opt("ingredientJson") ?? "{}",
+                format: args.opt("mimeType") ?? mimeType(forPath: path),
+                from: try openForRead(path)
+            )
+            return nil
+        case "builderAddIngredientFromArchive":
+            try builder(args).addIngredient(fromArchive: try Stream(data: try args.reqData("archiveData")))
+            return nil
+        case "builderWriteIngredientArchive":
+            let sink = DataSink()
+            try builder(args).writeIngredientArchive(id: try args.req("ingredientId"), to: try sink.stream())
+            return sink.data
+        case "builderAddAction":
+            try builder(args).addAction(try parseAction(try args.req("actionJson")))
+            return nil
+        case "builderToArchive":
+            let sink = DataSink()
+            try builder(args).writeArchive(to: try sink.stream())
+            return sink.data
 
-            result(certChainPem)
-        } catch {
-            result(FlutterError(code: "C2PA_ERROR", message: error.localizedDescription, details: nil))
-        }
-    }
+        // Builder signing
+        case "builderSign":
+            return try handleBuilderSign(args)
+        case "builderSignFile":
+            return try handleBuilderSignFile(args)
 
-    // MARK: - Key Management
-
-    private func handleIsHardwareSigningAvailable(result: @escaping FlutterResult) {
-        #if targetEnvironment(simulator)
-        result(false)
-        #else
-        result(true)
-        #endif
-    }
-
-    private func handleCreateKey(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let keyAlias = args["keyAlias"] as? String else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "keyAlias is required", details: nil))
-            return
-        }
-
-        let useHardware = args["useHardware"] as? Bool ?? false
-
-        if useHardware {
-            #if targetEnvironment(simulator)
-            result(FlutterError(code: "NOT_AVAILABLE", message: "Secure Enclave not available in Simulator", details: nil))
-            #else
-            do {
-                let config = SecureEnclaveSignerConfig(keyTag: keyAlias, accessControl: [.privateKeyUsage])
-                _ = try Signer.createSecureEnclaveKey(config: config)
-                result(nil)
-            } catch {
-                result(FlutterError(code: "ERROR", message: error.localizedDescription, details: nil))
+        // Embeddable / data-hash / BMFF flows
+        case "builderNeedsPlaceholder":
+            return try builder(args).needsPlaceholder(format: try args.req("mimeType"))
+        case "builderPlaceholder":
+            return try builder(args).placeholder(format: try args.req("mimeType"))
+        case "builderSetDataHashExclusions":
+            let raw: [[NSNumber]] = try args.req("exclusions")
+            let exclusions = try raw.map { pair -> (start: UInt64, length: UInt64) in
+                guard pair.count == 2 else {
+                    throw PluginError.invalidArgument("Each exclusion must be [start, length]")
+                }
+                return (start: pair[0].uint64Value, length: pair[1].uint64Value)
             }
-            #endif
-        } else {
-            createKeychainKey(keyAlias: keyAlias, result: result)
-        }
-    }
+            try builder(args).setDataHashExclusions(exclusions)
+            return nil
+        case "builderUpdateHashFromBytes":
+            try builder(args).updateHashFromStream(
+                format: try args.req("mimeType"),
+                stream: try Stream(data: try args.reqData("data"))
+            )
+            return nil
+        case "builderUpdateHashFromFile":
+            let path: String = try args.req("path")
+            try builder(args).updateHashFromStream(
+                format: args.opt("mimeType") ?? mimeType(forPath: path),
+                stream: try openForRead(path)
+            )
+            return nil
+        case "builderSignEmbeddable":
+            return try builder(args).signEmbeddable(format: try args.req("mimeType"))
+        case "builderHashType":
+            return hashTypeName(try builder(args).hashType(format: try args.req("mimeType")))
+        case "builderSetFixedSizeMerkle":
+            try builder(args).setFixedSizeMerkle(try args.reqInt("fixedSizeKb"))
+            return nil
+        case "builderHashMdatBytes":
+            try builder(args).hashMdatBytes(
+                mdatId: try args.reqInt("mdatId"),
+                data: try args.reqData("data"),
+                largeSize: args.opt("largeSize") ?? false
+            )
+            return nil
 
-    private func createKeychainKey(keyAlias: String, result: @escaping FlutterResult) {
-        let attributes: [String: Any] = [
-            kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
-            kSecAttrKeySizeInBits as String: 256,
-            kSecPrivateKeyAttrs as String: [
-                kSecAttrIsPermanent as String: true,
-                kSecAttrApplicationTag as String: keyAlias.data(using: .utf8)!
-            ]
-        ]
+        // Settings
+        case "loadSettings":
+            try handleLoadSettings(args)
+            return nil
+        case "createSettings":
+            return settingsHandles.store(try C2PASettings(json: "{\"version\":1}"))
+        case "settingsUpdateFromString":
+            try load(
+                into: try settingsFor(try args.reqInt("handle")),
+                try args.req("settings"),
+                format: try args.req("format")
+            )
+            return nil
+        case "settingsSetValue":
+            let value: String = try args.req("value")
+            try settingsFor(try args.reqInt("handle")).setValue(jsonValue(value), forPath: try args.req("path"))
+            return nil
+        case "settingsDispose":
+            settingsHandles.remove(try args.reqInt("handle"))
+            return nil
 
-        var error: Unmanaged<CFError>?
-        guard SecKeyCreateRandomKey(attributes as CFDictionary, &error) != nil else {
-            let errorMessage = error?.takeRetainedValue().localizedDescription ?? "Unknown error"
-            result(FlutterError(code: "ERROR", message: "Failed to create key: \(errorMessage)", details: nil))
-            return
-        }
+        // Contexts
+        case "createContext", "createContextFromSettings":
+            return try handleCreateContext(args)
+        case "contextDispose":
+            contexts.remove(try args.reqInt("handle"))
+            return nil
 
-        result(nil)
-    }
-
-    private func handleDeleteKey(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let keyAlias = args["keyAlias"] as? String else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "keyAlias is required", details: nil))
-            return
-        }
-
-        let deleted = Signer.deleteSecureEnclaveKey(keyTag: keyAlias)
-        if !deleted {
-            let query: [String: Any] = [
-                kSecClass as String: kSecClassKey,
-                kSecAttrApplicationTag as String: keyAlias.data(using: .utf8)!
-            ]
-            SecItemDelete(query as CFDictionary)
-        }
-        result(nil)
-    }
-
-    private func handleKeyExists(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let keyAlias = args["keyAlias"] as? String else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "keyAlias is required", details: nil))
-            return
-        }
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassKey,
-            kSecAttrApplicationTag as String: keyAlias.data(using: .utf8)!,
-            kSecReturnRef as String: false
-        ]
-
-        let status = SecItemCopyMatching(query as CFDictionary, nil)
-        result(status == errSecSuccess)
-    }
-
-    private func handleExportPublicKey(call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let keyAlias = args["keyAlias"] as? String else {
-            result(FlutterError(code: "INVALID_ARGUMENT", message: "keyAlias is required", details: nil))
-            return
-        }
-
-        do {
-            let pem = try Signer.exportPublicKeyPEM(fromKeychainTag: keyAlias)
-            result(pem)
-        } catch {
-            result(FlutterError(code: "ERROR", message: error.localizedDescription, details: nil))
-        }
-    }
-
-    // MARK: - Helper Functions
-
-    private func mapAlgorithm(_ str: String) -> SigningAlgorithm {
-        switch str.lowercased() {
-        case "es256": return .es256
-        case "es384": return .es384
-        case "es512": return .es512
-        case "ps256": return .ps256
-        case "ps384": return .ps384
-        case "ps512": return .ps512
-        case "ed25519": return .ed25519
-        default: return .es256
-        }
-    }
-
-    private func mapIntent(_ str: String, digitalSourceType: String?) -> BuilderIntent {
-        switch str.lowercased() {
-        case "create":
-            let sourceType = mapDigitalSourceType(digitalSourceType) ?? .digitalCapture
-            return .create(sourceType)
-        case "edit":
-            return .edit
-        case "update":
-            return .update
         default:
-            let sourceType = mapDigitalSourceType(digitalSourceType) ?? .digitalCapture
-            return .create(sourceType)
+            return NotImplementedMarker()
         }
     }
 
-    private func mapDigitalSourceType(_ str: String?) -> DigitalSourceType? {
-        guard let str = str else { return nil }
-        switch str {
-        case "algorithmicallyEnhanced": return .algorithmicallyEnhanced
-        case "algorithmicMedia": return .algorithmicMedia
-        case "composite": return .composite
-        case "compositeCapture": return .compositeCapture
-        case "compositeSynthetic": return .compositeSynthetic
-        case "compositeWithTrainedAlgorithmicMedia": return .compositeWithTrainedAlgorithmicMedia
-        case "dataDrivenMedia": return .dataDrivenMedia
-        case "digitalCreation": return .digitalCreation
-        case "digitalCapture": return .digitalCapture
-        case "humanEdits": return .humanEdits
-        case "negativeFilm": return .negativeFilm
-        case "positiveFilm": return .positiveFilm
-        case "print": return .print
-        case "screenCapture": return .screenCapture
-        case "trainedAlgorithmicMedia": return .trainedAlgorithmicMedia
-        case "virtualRecording": return .virtualRecording
-        default: return nil
+    // MARK: - Handle lookup and factories
+
+    private func builder(_ args: Args) throws -> Builder {
+        guard let builder = builders.get(try args.reqInt("handle")) else {
+            throw PluginError.invalidHandle("builder")
+        }
+        return builder
+    }
+
+    private func settingsFor(_ handle: Int) throws -> C2PASettings {
+        guard let settings = settingsHandles.get(handle) else {
+            throw PluginError.invalidHandle("settings")
+        }
+        return settings
+    }
+
+    /// The context for [handle], a fresh one built from the default settings,
+    /// or nil to let the SDK use its own default context.
+    private func contextFor(_ handle: Int?) throws -> C2PAContext? {
+        if let handle = handle {
+            guard let context = contexts.get(handle) else {
+                throw PluginError.invalidHandle("context")
+            }
+            return context
+        }
+        if let defaults = defaultSettings {
+            return try C2PAContext(settings: defaults)
+        }
+        return nil
+    }
+
+    private func newReader(_ contextHandle: Int?, format: String, stream: Stream) throws -> Reader {
+        if let context = try contextFor(contextHandle) {
+            return try Reader(context: context, format: format, stream: stream)
+        }
+        return try Reader(format: format, stream: stream)
+    }
+
+    private func newBuilder(_ contextHandle: Int?, _ manifestJson: String) throws -> Builder {
+        if let context = try contextFor(contextHandle) {
+            return try Builder(context: context, manifestJSON: manifestJson)
+        }
+        return try Builder(manifestJSON: manifestJson)
+    }
+
+    private func load(into settings: C2PASettings, _ text: String, format: String) throws {
+        switch format.lowercased() {
+        case "json": try settings.load(json: text)
+        case "toml": try settings.load(toml: text)
+        default: throw PluginError.invalidArgument("format must be 'json' or 'toml'")
         }
     }
 
-    private func mimeTypeForExtension(_ ext: String) -> String {
-        switch ext {
-        case "jpg", "jpeg": return "image/jpeg"
-        case "png": return "image/png"
-        case "webp": return "image/webp"
-        case "avif": return "image/avif"
-        case "heic": return "image/heic"
-        case "heif": return "image/heif"
-        case "gif": return "image/gif"
-        case "tiff", "tif": return "image/tiff"
-        case "mp4": return "video/mp4"
-        case "mov": return "video/quicktime"
-        case "pdf": return "application/pdf"
-        default: return "application/octet-stream"
+    private func newSettings(_ text: String, format: String) throws -> C2PASettings {
+        switch format.lowercased() {
+        case "json": return try C2PASettings(json: text)
+        case "toml": return try C2PASettings(toml: text)
+        default: throw PluginError.invalidArgument("format must be 'json' or 'toml'")
         }
     }
 
-    // MARK: - Builder Handle Management
+    /// Interprets a Dart setting value: JSON literals (true, 42, null, "x",
+    /// arrays, objects) keep their type; anything else is a plain string.
+    private func jsonValue(_ value: String) -> Any {
+        if let data = value.data(using: .utf8),
+           let parsed = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) {
+            return parsed
+        }
+        return value
+    }
 
-    private func storeBuilder(_ builder: Builder) -> Int {
-        builderLock.lock()
-        defer { builderLock.unlock() }
+    private func parseAction(_ json: String) throws -> Action {
+        guard let data = json.data(using: .utf8),
+              let dict = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let name = dict["action"] as? String else {
+            throw PluginError.invalidArgument("actionJson must be an object with an 'action' string")
+        }
+        let parameters = (dict["parameters"] as? [String: Any])?.mapValues { AnyCodable($0) }
+        let softwareAgent: AnyCodable? = dict["softwareAgent"].flatMap { $0 is NSNull ? nil : AnyCodable($0) }
+        return Action(
+            action: name,
+            digitalSourceType: dict["digitalSourceType"] as? String,
+            softwareAgent: softwareAgent,
+            parameters: parameters,
+            when: dict["when"] as? String
+        )
+    }
 
-        let handle = nextBuilderHandle
-        nextBuilderHandle += 1
-        builders[handle] = builder
+    private func handleSetIntent(_ args: Args) throws {
+        let builder = try builder(args)
+        let intent: String = try args.req("intent")
+        let sourceName: String? = args.opt("digitalSourceType")
+        switch intent {
+        case "create":
+            if let name = sourceName, parseDigitalSourceType(name) == nil {
+                // c2pa-swift's DigitalSourceType lacks this IPTC type, so
+                // declare the created action directly instead of via intent.
+                try builder.addAction(Action(
+                    action: "c2pa.created",
+                    digitalSourceType: digitalSourceTypeURL(name)
+                ))
+            } else {
+                try builder.setIntent(.create(sourceName.flatMap(parseDigitalSourceType) ?? .digitalCapture))
+            }
+        case "edit":
+            try builder.setIntent(.edit)
+        case "update":
+            try builder.setIntent(.update)
+        default:
+            throw PluginError.invalidArgument("Unknown intent: \(intent)")
+        }
+    }
+
+    // MARK: - Reader
+
+    private func output(_ reader: Reader, _ kind: String) throws -> String {
+        switch kind {
+        case "detailed": return try reader.detailedJSON()
+        case "crJson": return try reader.crJSON()
+        default: return try reader.json()
+        }
+    }
+
+    private func readFromPath(_ args: Args, output kind: String) throws -> String {
+        let path: String = try args.req("path")
+        let reader = try newReader(
+            args.optInt("contextHandle"),
+            format: args.opt("mimeType") ?? mimeType(forPath: path),
+            stream: try openForRead(path)
+        )
+        return try output(reader, kind)
+    }
+
+    private func readFromBytes(_ args: Args, output kind: String) throws -> String {
+        let reader = try newReader(
+            args.optInt("contextHandle"),
+            format: try args.req("mimeType"),
+            stream: try Stream(data: try args.reqData("data"))
+        )
+        return try output(reader, kind)
+    }
+
+    private func withPathReader<R>(_ args: Args, _ body: (Reader) throws -> R) throws -> R {
+        let path: String = try args.req("path")
+        let reader = try newReader(
+            args.optInt("contextHandle"),
+            format: args.opt("mimeType") ?? mimeType(forPath: path),
+            stream: try openForRead(path)
+        )
+        return try body(reader)
+    }
+
+    private func handleReadWithManifest(_ args: Args) throws -> String {
+        let manifest = try args.reqData("manifestData")
+        let stream: Stream
+        let format: String
+        if let data = args.optData("data") {
+            stream = try Stream(data: data)
+            format = try args.req("mimeType")
+        } else {
+            let path: String = try args.req("path")
+            stream = try openForRead(path)
+            format = args.opt("mimeType") ?? mimeType(forPath: path)
+        }
+        let reader: Reader
+        if let context = try contextFor(args.optInt("contextHandle")) {
+            reader = try Reader(context: context, format: format, stream: stream, manifest: manifest)
+        } else {
+            reader = try Reader(format: format, stream: stream, manifest: manifest)
+        }
+        return try output(reader, (args.opt("detailed") ?? false) ? "detailed" : "json")
+    }
+
+    private func handleExtractResource(_ args: Args) throws -> Data {
+        let reader = try newReader(
+            args.optInt("contextHandle"),
+            format: try args.req("mimeType"),
+            stream: try Stream(data: try args.reqData("data"))
+        )
+        let sink = DataSink()
+        try reader.resource(uri: try args.req("uri"), to: try sink.stream())
+        return sink.data
+    }
+
+    // MARK: - Signing
+
+    private func signResultMap(manifest: Data, signedData: Data?) -> [String: Any] {
+        [
+            "signedData": typed(signedData),
+            "manifestBytes": FlutterStandardTypedData(bytes: manifest),
+            "manifestSize": manifest.count,
+        ]
+    }
+
+    /// Signs with an explicit signer map, or the builder's context signer when nil.
+    private func sign(
+        _ builder: Builder,
+        signerMap: [String: Any]?,
+        format: String,
+        source: Stream,
+        destination: Stream
+    ) throws -> Data {
+        guard let signerMap = signerMap else {
+            return try builder.sign(format: format, source: source, destination: destination)
+        }
+        let signer = try signers.create(signerMap)
+        return try builder.sign(format: format, source: source, destination: destination, signer: signer)
+    }
+
+    /// A builder whose context carries the signer described by a SettingsSigner map.
+    private func settingsSignerBuilder(_ signerMap: [String: Any], manifestJson: String) throws -> Builder {
+        let settingsArgs = Args(map: signerMap)
+        let settings = try newSettings(try settingsArgs.req("settings"), format: settingsArgs.opt("format") ?? "json")
+        return try Builder(context: try C2PAContext(settings: settings), manifestJSON: manifestJson)
+    }
+
+    private func handleSignBytes(_ args: Args) throws -> [String: Any] {
+        let signerMap: [String: Any] = try args.req("signer")
+        let format: String = try args.req("mimeType")
+        let manifestJson: String = try args.req("manifestJson")
+        let source = try Stream(data: try args.reqData("sourceData"))
+        let dest = TempFile()
+        let destination = try Stream(writeTo: dest.url)
+
+        let manifest: Data
+        if signers.isSettingsSigner(signerMap) {
+            manifest = try settingsSignerBuilder(signerMap, manifestJson: manifestJson)
+                .sign(format: format, source: source, destination: destination)
+        } else {
+            manifest = try sign(
+                try newBuilder(nil, manifestJson),
+                signerMap: signerMap,
+                format: format,
+                source: source,
+                destination: destination
+            )
+        }
+        return signResultMap(manifest: manifest, signedData: try dest.contents())
+    }
+
+    private func handleSignFile(_ args: Args) throws {
+        let signerMap: [String: Any] = try args.req("signer")
+        let sourcePath: String = try args.req("sourcePath")
+        let format: String = args.opt("mimeType") ?? mimeType(forPath: sourcePath)
+        let manifestJson: String = try args.req("manifestJson")
+        let source = try openForRead(sourcePath)
+        let destination = try openForWrite(try args.req("destPath"))
+
+        if signers.isSettingsSigner(signerMap) {
+            _ = try settingsSignerBuilder(signerMap, manifestJson: manifestJson)
+                .sign(format: format, source: source, destination: destination)
+        } else {
+            _ = try sign(
+                try newBuilder(nil, manifestJson),
+                signerMap: signerMap,
+                format: format,
+                source: source,
+                destination: destination
+            )
+        }
+    }
+
+    private func handleBuilderSign(_ args: Args) throws -> [String: Any] {
+        let builder = try builder(args)
+        let dest = TempFile()
+        let manifest = try sign(
+            builder,
+            signerMap: args.opt("signer"),
+            format: try args.req("mimeType"),
+            source: try Stream(data: try args.reqData("sourceData")),
+            destination: try Stream(writeTo: dest.url)
+        )
+        return signResultMap(manifest: manifest, signedData: try dest.contents())
+    }
+
+    private func handleBuilderSignFile(_ args: Args) throws -> [String: Any] {
+        let builder = try builder(args)
+        let sourcePath: String = try args.req("sourcePath")
+        let manifest = try sign(
+            builder,
+            signerMap: args.opt("signer"),
+            format: args.opt("mimeType") ?? mimeType(forPath: sourcePath),
+            source: try openForRead(sourcePath),
+            destination: try openForWrite(try args.req("destPath"))
+        )
+        return signResultMap(manifest: manifest, signedData: nil)
+    }
+
+    // MARK: - Settings and contexts
+
+    private func handleLoadSettings(_ args: Args) throws {
+        let text: String = try args.req("settings")
+        let format: String = try args.req("format")
+        if let defaults = defaultSettings {
+            try load(into: defaults, text, format: format)
+        } else {
+            defaultSettings = try newSettings(text, format: format)
+        }
+    }
+
+    private func handleCreateContext(_ args: Args) throws -> Int {
+        let settings = try args.optInt("settingsHandle").map { try settingsFor($0) }
+        let signerMap: [String: Any]? = args.opt("signer")
+        let wantsProgress: Bool = args.opt("progress") ?? false
+        let resolverMode: String? = args.opt("httpResolver")
+
+        let handle = contexts.reserve()
+        let bridge = self.bridge
+        let signer = try signerMap.map { try signers.create($0) }
+
+        let onProgress: (@Sendable (ProgressUpdate) -> ProgressDisposition)? = wantsProgress
+            ? { update in
+                bridge.notify("contextProgress", [
+                    "contextHandle": handle,
+                    "phase": progressPhaseName(update.phase),
+                    "step": Int(update.step),
+                    "total": Int(update.total),
+                ])
+                return .continue
+            }
+            : nil
+
+        let context: C2PAContext
+        switch resolverMode {
+        case nil:
+            context = try C2PAContext(settings: settings, signer: signer, onProgress: onProgress, httpResolver: nil)
+        case "native":
+            context = try C2PAContext(
+                settings: settings,
+                signer: signer,
+                onProgress: onProgress,
+                urlSession: URLSession(configuration: .default)
+            )
+        case "callback":
+            context = try C2PAContext(settings: settings, signer: signer, onProgress: onProgress) { request in
+                let response = try bridge.invokeBlocking("httpResolve", [
+                    "contextHandle": handle,
+                    "url": request.url.absoluteString,
+                    "method": request.method,
+                    "headers": request.headers,
+                    "body": typed(request.body),
+                ])
+                guard let map = response as? [String: Any], let status = (map["status"] as? NSNumber)?.intValue else {
+                    throw C2PAError.api("HTTP resolver returned no response")
+                }
+                let body = (map["body"] as? FlutterStandardTypedData)?.data ?? Data()
+                return HTTPResponse(status: status, body: body)
+            }
+        default:
+            throw PluginError.invalidArgument("Unknown httpResolver mode: \(resolverMode ?? "")")
+        }
+        contexts.put(handle, context)
         return handle
     }
 
-    private func getBuilder(_ handle: Int) -> Builder? {
-        builderLock.lock()
-        defer { builderLock.unlock() }
-
-        return builders[handle]
-    }
-
-    private func removeBuilder(_ handle: Int) {
-        builderLock.lock()
-        defer { builderLock.unlock() }
-
-        builders.removeValue(forKey: handle)
-    }
-
-    // MARK: - Settings Handle Management
-
-    private func storeSettings(_ entry: SettingsEntry) -> Int {
-        settingsLock.lock()
-        defer { settingsLock.unlock() }
-
-        let handle = nextSettingsHandle
-        nextSettingsHandle += 1
-        settingsMap[handle] = entry
-        return handle
-    }
-
-    private func getSettings(_ handle: Int) -> SettingsEntry? {
-        settingsLock.lock()
-        defer { settingsLock.unlock() }
-
-        return settingsMap[handle]
-    }
-
-    private func removeSettings(_ handle: Int) {
-        settingsLock.lock()
-        defer { settingsLock.unlock() }
-
-        settingsMap.removeValue(forKey: handle)
-    }
-
-    /// Apply all stored settings segments from a settings handle globally.
-    private func applySettingsFromHandle(_ handle: Int) throws {
-        guard let entry = getSettings(handle) else {
-            throw C2PAError.api("Settings handle not found")
+    private func handleContextCancel(_ args: Args) throws -> Any? {
+        guard let context = contexts.get(try args.reqInt("handle")) else {
+            throw PluginError.invalidHandle("context")
         }
-
-        for segment in entry.segments {
-            guard let format = Signer.SettingsFormat(rawValue: segment.format) else { continue }
-            try Signer.loadSettings(segment.settings, format: format)
-        }
-    }
-
-    // MARK: - Context Handle Management
-
-    private func storeContext(settingsHandle: Int) -> Int {
-        contextLock.lock()
-        defer { contextLock.unlock() }
-
-        let handle = nextContextHandle
-        nextContextHandle += 1
-        contexts[handle] = settingsHandle
-        return handle
-    }
-
-    private func getContextSettingsHandle(_ handle: Int) -> Int? {
-        contextLock.lock()
-        defer { contextLock.unlock() }
-
-        return contexts[handle]
-    }
-
-    private func removeContext(_ handle: Int) {
-        contextLock.lock()
-        defer { contextLock.unlock() }
-
-        contexts.removeValue(forKey: handle)
-    }
-
-    /// Apply settings from a context handle (resolves context -> settings -> load).
-    private func applyContextSettings(_ contextHandle: Int) throws {
-        guard let settingsHandle = getContextSettingsHandle(contextHandle) else {
-            throw C2PAError.api("Context handle not found")
-        }
-
-        try applySettingsFromHandle(settingsHandle)
+        try context.cancel()
+        return nil
     }
 }

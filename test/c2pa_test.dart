@@ -102,11 +102,11 @@ void main() {
     test('readManifestFromFile with options', () async {
       final result = await c2pa.readManifestFromFile(
         '/path/to/image.jpg',
-        options: const ReaderOptions(detailed: true, dataDir: '/tmp/data'),
+        options: const ReaderOptions(detailed: true),
       );
       expect(result, isNotNull);
       expect(mockPlatform.methodCalls.last.arguments!['detailed'], true);
-      expect(mockPlatform.methodCalls.last.arguments!['dataDir'], '/tmp/data');
+      expect(mockPlatform.methodCalls.last.arguments!['contextHandle'], isNull);
     });
 
     test('readManifestFromBytes returns ManifestStoreInfo', () async {
@@ -128,12 +128,15 @@ void main() {
       expect(result, equals(Uint8List.fromList([1, 2, 3, 4])));
     });
 
-    test('readIngredientFromFile returns ingredient JSON', () async {
-      final result = await c2pa.readIngredientFromFile(
-        '/path/to/ingredient.jpg',
+    test('readManifestFromFile passes the reader context', () async {
+      final context = await C2paContext.create();
+      await c2pa.readManifestFromFile(
+        '/path/to/image.jpg',
+        options: ReaderOptions(context: context),
       );
-      expect(result, isNotNull);
-      expect(result, contains('title'));
+      final call = mockPlatform.methodCalls.last;
+      expect(call.method, 'readFileDetailed');
+      expect(call.arguments!['contextHandle'], context.handle);
     });
 
     test('getSupportedReadMimeTypes returns list', () async {
@@ -516,7 +519,6 @@ void main() {
 
   group('Advanced Signing API', () {
     late PemSigner signer;
-    late ManifestBuilder builder;
 
     setUp(() async {
       signer = PemSigner(
@@ -526,40 +528,19 @@ void main() {
         privateKeyPem:
             '-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----',
       );
-      builder = await c2pa.createBuilder('{}');
     });
 
-    test('createHashedPlaceholder returns data', () async {
-      final placeholder = await c2pa.createHashedPlaceholder(
-        builder: builder,
-        reservedSize: 5000,
-        mimeType: 'image/jpeg',
-      );
-
-      expect(placeholder, isNotNull);
-      expect(placeholder.length, 5000);
-    });
-
-    test('signHashedEmbeddable returns manifest', () async {
-      final manifest = await c2pa.signHashedEmbeddable(
-        builder: builder,
-        signer: signer,
-        dataHash: 'abc123hash',
-        mimeType: 'image/jpeg',
-      );
-
-      expect(manifest, isNotNull);
-      expect(manifest.length, greaterThan(0));
-    });
-
-    test('formatEmbeddable returns formatted data', () async {
+    test('composeManifest returns composed data', () async {
       final manifestBytes = Uint8List.fromList([0xC2, 0xAA, 0x00, 0x01]);
-      final formatted = await c2pa.formatEmbeddable(
+      final composed = await c2pa.composeManifest(
         mimeType: 'image/jpeg',
         manifestBytes: manifestBytes,
       );
 
-      expect(formatted, equals(manifestBytes));
+      expect(composed.sublist(2), equals(manifestBytes));
+      final call = mockPlatform.methodCalls.last;
+      expect(call.method, 'composeManifest');
+      expect(call.arguments!['mimeType'], 'image/jpeg');
     });
 
     test('getSignerReserveSize returns size', () async {
@@ -751,14 +732,14 @@ void main() {
       test('default values', () {
         const options = ReaderOptions();
         expect(options.detailed, false);
-        expect(options.dataDir, isNull);
+        expect(options.context, isNull);
       });
 
       test('toMap serializes correctly', () {
-        const options = ReaderOptions(detailed: true, dataDir: '/data');
+        const options = ReaderOptions(detailed: true);
         final map = options.toMap();
         expect(map['detailed'], true);
-        expect(map['dataDir'], '/data');
+        expect(map['contextHandle'], isNull);
       });
     });
 
@@ -919,7 +900,7 @@ void main() {
 
         expect(context.handle, greaterThan(0));
         final call = mockPlatform.methodCalls.last;
-        expect(call.method, 'createContextFromSettings');
+        expect(call.method, 'createContext');
         expect(call.arguments!['settingsHandle'], settings.handle);
       },
     );
@@ -995,7 +976,7 @@ void main() {
         final result = await c2pa.readManifestFromFileWithContext(
           '/path/to/image.jpg',
           context,
-          options: const ReaderOptions(detailed: true, dataDir: '/tmp/data'),
+          options: const ReaderOptions(detailed: true),
         );
 
         expect(result, isNotNull);
@@ -1006,7 +987,6 @@ void main() {
         expect(call.arguments!['path'], '/path/to/image.jpg');
         expect(call.arguments!['contextHandle'], context.handle);
         expect(call.arguments!['detailed'], true);
-        expect(call.arguments!['dataDir'], '/tmp/data');
       },
     );
 
