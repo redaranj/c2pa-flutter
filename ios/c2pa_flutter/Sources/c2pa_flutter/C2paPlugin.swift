@@ -130,9 +130,10 @@ public class C2paPlugin: NSObject, FlutterPlugin {
         case "readBytesDetailed":
             return try readFromBytes(args, output: (args.opt("detailed") ?? false) ? "detailed" : "json")
         case "readCrJson":
-            return args.optData("data") != nil
-                ? try readFromBytes(args, output: "crJson")
-                : try readFromPath(args, output: "crJson")
+            if args.optData("data") != nil {
+                return try readFromBytes(args, output: "crJson")
+            }
+            return try readFromPath(args, output: "crJson")
         case "readWithManifest":
             return try handleReadWithManifest(args)
         case "readFragment":
@@ -619,17 +620,19 @@ public class C2paPlugin: NSObject, FlutterPlugin {
         let bridge = self.bridge
         let signer = try signerMap.map { try signers.create($0) }
 
-        let onProgress: (@Sendable (ProgressUpdate) -> ProgressDisposition)? = wantsProgress
-            ? { update in
-                bridge.notify("contextProgress", [
+        var onProgress: (@Sendable (ProgressUpdate) -> ProgressDisposition)?
+        if wantsProgress {
+            onProgress = { @Sendable (update: ProgressUpdate) -> ProgressDisposition in
+                let event: [String: Any] = [
                     "contextHandle": handle,
                     "phase": progressPhaseName(update.phase),
                     "step": Int(update.step),
                     "total": Int(update.total),
-                ])
-                return .continue
+                ]
+                bridge.notify("contextProgress", event)
+                return ProgressDisposition.continue
             }
-            : nil
+        }
 
         let context: C2PAContext
         switch resolverMode {
@@ -643,20 +646,23 @@ public class C2paPlugin: NSObject, FlutterPlugin {
                 urlSession: URLSession(configuration: .default)
             )
         case "callback":
-            context = try C2PAContext(settings: settings, signer: signer, onProgress: onProgress) { request in
-                let response = try bridge.invokeBlocking("httpResolve", [
+            let resolver: @Sendable (HTTPRequest) throws -> HTTPResponse = { (request: HTTPRequest) throws -> HTTPResponse in
+                let arguments: [String: Any] = [
                     "contextHandle": handle,
                     "url": request.url.absoluteString,
                     "method": request.method,
                     "headers": request.headers,
                     "body": typed(request.body),
-                ])
-                guard let map = response as? [String: Any], let status = (map["status"] as? NSNumber)?.intValue else {
+                ]
+                let response = try bridge.invokeBlocking("httpResolve", arguments)
+                guard let map = response as? [String: Any],
+                      let status = (map["status"] as? NSNumber)?.intValue else {
                     throw C2PAError.api("HTTP resolver returned no response")
                 }
                 let body = (map["body"] as? FlutterStandardTypedData)?.data ?? Data()
                 return HTTPResponse(status: status, body: body)
             }
+            context = try C2PAContext(settings: settings, signer: signer, onProgress: onProgress, httpResolver: resolver)
         default:
             throw PluginError.invalidArgument("Unknown httpResolver mode: \(resolverMode ?? "")")
         }
