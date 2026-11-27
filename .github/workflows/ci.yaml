@@ -163,9 +163,9 @@ jobs:
       - name: Cache Xcode DerivedData
         uses: irgaly/xcode-cache@v1
         with:
-          key: xcode-deriveddata-${{ runner.os }}-${{ hashFiles('example/pubspec.lock', 'ios/c2pa_flutter/Package.swift') }}
+          key: xcode-deriveddata-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-${{ hashFiles('example/pubspec.lock', 'ios/c2pa_flutter/Package.swift') }}
           restore-keys: |
-            xcode-deriveddata-${{ runner.os }}-
+            xcode-deriveddata-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-
 
       - name: Install dependencies
         run: |
@@ -259,9 +259,9 @@ jobs:
       - name: Cache Xcode DerivedData
         uses: irgaly/xcode-cache@v1
         with:
-          key: xcode-deriveddata-${{ runner.os }}-${{ hashFiles('example/pubspec.lock', 'ios/c2pa_flutter/Package.swift') }}
+          key: xcode-deriveddata-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-${{ hashFiles('example/pubspec.lock', 'ios/c2pa_flutter/Package.swift') }}
           restore-keys: |
-            xcode-deriveddata-${{ runner.os }}-
+            xcode-deriveddata-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-
 
       - name: Install dependencies
         run: |
