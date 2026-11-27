@@ -163,6 +163,18 @@ void main() {
       );
     });
 
+    test('an ingredient links to its manifest by label', () {
+      final ingredient = IngredientInfo.fromMap({
+        'title': 'parent.jpg',
+        'relationship': 'parentOf',
+        'active_manifest': 'urn:c2pa:parent',
+        'manifest': 'urn:c2pa:parent',
+      });
+      expect(ingredient.activeManifest, 'urn:c2pa:parent');
+      expect(ingredient.manifest, isNull);
+      expect(ingredient.relationship, Relationship.parentOf);
+    });
+
     test('an unknown signature algorithm parses as null', () {
       expect(
         SignatureInfo.fromMap({'alg': 'Es384'}).algorithm,

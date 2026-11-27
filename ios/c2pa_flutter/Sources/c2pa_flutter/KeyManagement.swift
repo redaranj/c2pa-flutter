@@ -89,9 +89,45 @@ final class KeyManagement {
         return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
     }
 
+    /// Exports the public key as a PEM SubjectPublicKeyInfo, the form Android
+    /// returns. c2pa-swift's `Signer.exportPublicKeyPEM` returns the bare
+    /// X9.63 point under the same PEM label, so the point is wrapped here.
     func exportPublicKey(_ args: Args) throws -> String {
-        try Signer.exportPublicKeyPEM(fromKeychainTag: try args.req("keyAlias"))
+        let keyAlias: String = try args.req("keyAlias")
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassKey,
+            kSecAttrApplicationTag as String: keyAlias,
+            kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+            kSecReturnRef as String: true,
+        ]
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        guard status == errSecSuccess, let found = item else {
+            throw PluginError(code: "KEY_NOT_FOUND", message: "Key not found: \(keyAlias)")
+        }
+        // swiftlint:disable:next force_cast
+        let privateKey = found as! SecKey
+        var error: Unmanaged<CFError>?
+        guard let publicKey = SecKeyCopyPublicKey(privateKey),
+              let point = SecKeyCopyExternalRepresentation(publicKey, &error) as Data? else {
+            let message = error?.takeRetainedValue().localizedDescription ?? "no public key"
+            throw PluginError(code: "ERROR", message: "Failed to export public key: \(message)")
+        }
+        guard let header = Self.spkiHeaders[point.count] else {
+            throw PluginError(code: "ERROR", message: "Unexpected EC point of \(point.count) bytes")
+        }
+        let der = header + point
+        let base64 = der.base64EncodedString(options: [.lineLength64Characters, .endLineWithLineFeed])
+        return "-----BEGIN PUBLIC KEY-----\n\(base64)\n-----END PUBLIC KEY-----"
     }
+
+    /// DER SubjectPublicKeyInfo prefixes for uncompressed P-256, P-384 and
+    /// P-521 points, keyed by the point's length.
+    private static let spkiHeaders: [Int: Data] = [
+        65: Data(hex: "3059301306072a8648ce3d020106082a8648ce3d030107034200"),
+        97: Data(hex: "3076301006072a8648ce3d020106052b81040022036200"),
+        133: Data(hex: "30819b301006072a8648ce3d020106052b8104002303818600"),
+    ]
 
     /// Imports an EC private key (PEM, PKCS#8 or SEC1) into the keychain under
     /// [keyAlias]. The certificate chain is not stored: keychain signers take
@@ -264,5 +300,18 @@ final class KeyManagement {
             throw PluginError(code: "ERROR", message: "Failed to extract public key from private key")
         }
         return try CertificateManager.createSelfSignedCertificateChain(for: publicKey, config: config)
+    }
+}
+
+private extension Data {
+    init(hex: String) {
+        var bytes = [UInt8]()
+        var index = hex.startIndex
+        while index < hex.endIndex {
+            let next = hex.index(index, offsetBy: 2)
+            bytes.append(UInt8(hex[index..<next], radix: 16)!)
+            index = next
+        }
+        self.init(bytes)
     }
 }

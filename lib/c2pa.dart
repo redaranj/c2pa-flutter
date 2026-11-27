@@ -469,17 +469,18 @@ class HardwareSigner extends C2paSigner {
 /// The remote service must provide:
 /// - A configuration endpoint returning algorithm, certificate chain, and TSA URL
 /// - A signing endpoint that accepts data and returns signatures
+@immutable
 class RemoteSigner extends C2paSigner {
-  /// Algorithm is determined by the remote service configuration.
-  /// This will be set after connecting to the service.
+  /// The remote service's configuration chooses the real algorithm when the
+  /// native side contacts it. Until then this reports
+  /// [SigningAlgorithm.es256].
   @override
-  SigningAlgorithm get algorithm => _algorithm ?? SigningAlgorithm.es256;
-  SigningAlgorithm? _algorithm;
+  SigningAlgorithm get algorithm => SigningAlgorithm.es256;
 
-  /// TSA URL is determined by the remote service configuration.
+  /// The remote service's configuration supplies the TSA URL, so this is
+  /// always null.
   @override
-  String? get tsaUrl => _tsaUrl;
-  String? _tsaUrl;
+  String? get tsaUrl => null;
 
   /// URL to the remote signing service configuration endpoint.
   final String configurationUrl;
@@ -490,7 +491,7 @@ class RemoteSigner extends C2paSigner {
   /// Optional custom HTTP headers for requests.
   final Map<String, String>? customHeaders;
 
-  RemoteSigner({
+  const RemoteSigner({
     required this.configurationUrl,
     this.bearerToken,
     this.customHeaders,
@@ -776,6 +777,11 @@ class IngredientInfo {
   /// The ingredient's manifest if present
   final ManifestInfo? manifest;
 
+  /// Label of the ingredient's own active manifest, a key of
+  /// [ManifestStoreInfo.manifests]. Null when the ingredient carried no
+  /// content credentials.
+  final String? activeManifest;
+
   /// Validation status of the ingredient
   final ValidationStatus validationStatus;
 
@@ -787,6 +793,7 @@ class IngredientInfo {
     required this.relationship,
     this.thumbnailUri,
     this.manifest,
+    this.activeManifest,
     this.validationStatus = ValidationStatus.unknown,
   });
 
@@ -803,9 +810,10 @@ class IngredientInfo {
       documentId: map['document_id'] as String?,
       relationship: relationship,
       thumbnailUri: _thumbnailIdentifier(map['thumbnail']),
-      manifest: map['manifest'] != null
+      manifest: map['manifest'] is Map<String, dynamic>
           ? ManifestInfo.fromMap(map['manifest'] as Map<String, dynamic>)
           : null,
+      activeManifest: map['active_manifest'] as String?,
       validationStatus: _parseValidationStatus(map['validation_status']),
     );
   }
