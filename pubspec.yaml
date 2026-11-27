@@ -1,13 +1,13 @@
 name: c2pa_flutter
 description: "Flutter plugin for C2PA (Coalition for Content Provenance and Authenticity) - read and sign content credentials on mobile devices."
 version: 0.1.0
-homepage: https://github.com/nicktardif/c2pa-flutter
-repository: https://github.com/nicktardif/c2pa-flutter
-issue_tracker: https://github.com/nicktardif/c2pa-flutter/issues
+homepage: https://github.com/guardianproject/c2pa-flutter
+repository: https://github.com/guardianproject/c2pa-flutter
+issue_tracker: https://github.com/guardianproject/c2pa-flutter/issues
 
 environment:
   sdk: ^3.10.1
-  flutter: '>=3.24.0'
+  flutter: '>=3.38.0'
 
 # Test certificates and mock keys are intentionally included for testing
 false_secrets:
