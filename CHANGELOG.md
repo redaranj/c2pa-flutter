@@ -12,6 +12,16 @@ Moves to c2pa-swift 0.1.0 and c2pa-android 0.1.2 (c2pa-rs 0.92). Both SDKs now s
 * `ManifestBuilder` gains abstract methods, so classes outside the package that implement it must add them.
 * A `SettingsSigner` can no longer be passed to `ManifestBuilder.sign` or `getSignerReserveSize`, because the SDKs no longer turn settings into a signer. Put the signer in a context's settings and call `sign` without a signer. `C2pa.signBytes` and `C2pa.signFile` still accept it.
 * `C2pa.loadSettings` now applies only to readers and builders the plugin creates without a context. The SDKs have no global settings any more.
+* Every failure is now a sealed `C2paException` (`C2paManifestNotFoundException`, `C2paCancelledException`, `C2paSdkException`, `C2paInvalidArgumentException`, `C2paUnsupportedException`, `C2paKeyException`, `C2paPlatformException`) instead of a `PlatformException`.
+* Reading an asset without a manifest throws `C2paManifestNotFoundException`, as both SDKs do, instead of being documented as returning null. `readFile`, `readBytes`, `readManifestFromFile`, `readManifestFromBytes` and `extractResource` return non-nullable types.
+* `ManifestBuilder.setIntent`, `setNoEmbed`, `setRemoteUrl` and `addAction` return futures. `dispose()` on builders, settings and contexts returns a future.
+* `C2paSettings.setValue` takes any JSON value (`true`, `42`, `'es256'`, a map) instead of a string.
+* `enrollHardwareKey` returns a `HardwareKeyEnrollment` instead of a map.
+* `ValidationStatus` gains `trusted`, read from the SDK's `validation_state`.
+* `SignatureInfo.algorithm` is null for an algorithm the plugin does not know, instead of `es256`.
+* `createKey` honours `algorithm` (P-256, P-384 or P-521) and rejects anything else. Hardware keys require `es256`.
+* Removed `C2pa.readManifestFromFileWithContext`. Pass the context in `ReaderOptions`.
+* The package needs Flutter 3.38 or later, which ships the Dart 3.10 SDK it already required.
 
 ### Added
 
@@ -29,6 +39,8 @@ Moves to c2pa-swift 0.1.0 and c2pa-android 0.1.2 (c2pa-rs 0.92). Both SDKs now s
 * `CawgIdentitySigner`, which combines a claim signer with an X.509 identity signer.
 * iOS: `createCSR`, `importKey` (EC keys) and `enrollHardwareKey`.
 * Supported MIME types now come from the native SDKs.
+* `IngredientInfo.activeManifest`, the label of the ingredient's own manifest.
+* Finalizers release builders, settings and contexts that are garbage collected without `dispose()`.
 
 ### Fixed
 
@@ -39,6 +51,10 @@ Moves to c2pa-swift 0.1.0 and c2pa-android 0.1.2 (c2pa-rs 0.92). Both SDKs now s
 * Android: `readFileDetailed` and `readBytesDetailed` honour `detailed`.
 * iOS: the IPTC source types c2pa-swift does not model (`empty`, `trainedAlgorithmicData`, `computationalCapture`) are recorded instead of falling back to `digitalCapture`.
 * iOS: MIME types for `.m4v`, `.m4a`, `.mp3`, `.wav`, `.svg` and `.dng`.
+* Builder calls reach the native builder in the order they are made, even when they are not awaited.
+* iOS: builders created without a context, `loadSettings` and `SettingsSigner` apply the same default `created_assertion_labels` as Android, so a manifest records the same assertions as created on both platforms.
+* iOS: `exportPublicKey` returns a SubjectPublicKeyInfo PEM like Android, not the bare EC point.
+* iOS: keychain keys use the tag form c2pa-swift's keychain signer looks up.
 
 ## 0.0.4
 

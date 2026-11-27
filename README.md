@@ -50,6 +50,7 @@ final c2pa = C2pa();
 ### Read
 
 ```dart
+// Throws C2paManifestNotFoundException when the asset has no manifest.
 final json = await c2pa.readFile('/path/to/image.jpg');
 
 final store = await c2pa.readManifestFromBytes(
@@ -78,13 +79,12 @@ final signer = PemSigner(
 );
 
 final builder = await c2pa.createBuilder(manifestJson);
-builder.setIntent(ManifestIntent.create, DigitalSourceType.digitalCapture);
+await builder.setIntent(ManifestIntent.create, DigitalSourceType.digitalCapture);
 final result = await builder.sign(
   sourceData: bytes,
   mimeType: 'image/jpeg',
   signer: signer,
 );
-builder.dispose();
 
 // Large files: stream natively instead of passing bytes through Dart.
 await builder.signFile(
@@ -92,7 +92,10 @@ await builder.signFile(
   destPath: '/path/to/signed.mp4',
   signer: signer,
 );
+await builder.dispose();
 ```
+
+Calls on a builder run in the order they are made, so an un-awaited `setIntent` still lands before the `sign` that follows it.
 
 Other signers are `CallbackSigner`, `KeystoreSigner`, `HardwareSigner`, `RemoteSigner` and `SettingsSigner`. `CawgIdentitySigner` wraps a claim signer and an identity signer:
 
@@ -122,12 +125,15 @@ final context = await C2paContext.create(
 final builder = await c2pa.createBuilderFromContext(context, manifestJson);
 final result = await builder.sign(sourceData: bytes, mimeType: 'image/jpeg');
 
-// From anywhere, while an operation runs:
+// From anywhere, while an operation runs. The operation throws
+// C2paCancelledException.
 await context.cancel();
 
-builder.dispose();
-context.dispose();
+await builder.dispose();
+await context.dispose();
 ```
+
+Builders, settings and contexts hold native resources. Dispose them when you are done; any that are garbage collected undisposed are released then.
 
 ### Embeddable manifests
 
@@ -145,6 +151,23 @@ final manifest = await builder.signEmbeddable('image/jpeg'); // same size as the
 
 `hashType()` tells you which workflow a format uses. `setFixedSizeMerkle()` and `hashMdatBytes()` handle fragmented BMFF. `C2pa.composeManifest()` frames raw `application/c2pa` bytes for a format.
 
+### Errors
+
+Every failure is a `C2paException`, a sealed class whose cases you can match:
+
+```dart
+try {
+  final store = await c2pa.readManifestFromFile(path);
+  print(store.validationStatus); // trusted, valid, invalid or unknown
+} on C2paManifestNotFoundException {
+  // No content credentials.
+} on C2paUnsupportedException catch (e) {
+  // Not available on this platform: e.code is NOT_IMPLEMENTED_IOS, ...
+} on C2paException catch (e) {
+  print('${e.code}: ${e.message}');
+}
+```
+
 ## Platform differences
 
 | Capability | Android | iOS |
@@ -154,6 +177,7 @@ final manifest = await builder.signEmbeddable('image/jpeg'); // same size as the
 | `writeIngredientArchive` | needs `builder.generate_c2pa_archive: true` in settings | yes |
 | `createSelfSignedCertificateChain` | `NOT_IMPLEMENTED_ANDROID` | yes |
 | `importKey` | EC and RSA, into AndroidKeyStore | EC P-256/384/521, into the keychain |
+| `createKey` | es256/es384/es512 software keys; hardware (StrongBox) es256 | es256/es384/es512 keychain keys; hardware (Secure Enclave) es256, devices only |
 | Digital source types `empty`, `trainedAlgorithmicData`, `computationalCapture` | via the SDK enum | recorded through an explicit `c2pa.created` action, since the c2pa-swift enum lacks them |
 
 `getSupportedReadMimeTypes()` and `getSupportedSignMimeTypes()` return the lists reported by each native SDK.
