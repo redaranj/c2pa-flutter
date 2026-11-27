@@ -259,9 +259,10 @@ void main() {
       // Check that assertions are present
       expect(active!.assertions.isNotEmpty, true);
 
-      // Find the actions assertion
+      // Find the actions assertion. c2pa-rs writes v2 actions as
+      // c2pa.actions.v2.
       final actionsAssertion = active.assertions.firstWhere(
-        (a) => a.label == 'c2pa.actions',
+        (a) => a.label == 'c2pa.actions' || a.label == 'c2pa.actions.v2',
         orElse: () => throw StateError('Actions assertion not found'),
       );
       expect(actionsAssertion.data['actions'], isNotNull);
