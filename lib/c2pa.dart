@@ -42,11 +42,14 @@ each license.
 /// // Read from file
 /// final json = await c2pa.readFile('/path/to/image.jpg');
 ///
-/// // Read with parsed data
-/// final manifest = await c2pa.readManifestFromFile('/path/to/image.jpg');
-/// if (manifest != null) {
+/// // Read with parsed data. An asset without content credentials throws
+/// // C2paManifestNotFoundException.
+/// try {
+///   final manifest = await c2pa.readManifestFromFile('/path/to/image.jpg');
 ///   print('Active manifest: ${manifest.activeManifest}');
 ///   print('Validation: ${manifest.validationStatus}');
+/// } on C2paManifestNotFoundException {
+///   print('No content credentials');
 /// }
 /// ```
 ///
@@ -59,7 +62,10 @@ each license.
 /// final builder = await c2pa.createBuilder('{"title": "My Photo"}');
 ///
 /// // Configure the manifest
-/// builder.setIntent(ManifestIntent.create, DigitalSourceType.digitalCapture);
+/// await builder.setIntent(
+///   ManifestIntent.create,
+///   DigitalSourceType.digitalCapture,
+/// );
 ///
 /// // Sign the content with a PEM signer
 /// final result = await builder.sign(
@@ -73,7 +79,7 @@ each license.
 /// );
 ///
 /// // Use result.signedData
-/// builder.dispose();
+/// await builder.dispose();
 /// ```
 ///
 /// ## Signer Types
@@ -100,6 +106,7 @@ each license.
 /// - [Content Authenticity Initiative](https://contentauthenticity.org/)
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -112,6 +119,7 @@ import 'src/settings_definition.dart';
 
 // Export manifest types
 export 'src/context_types.dart';
+export 'src/exceptions.dart';
 export 'src/manifest_types.dart';
 export 'src/manifest_validator.dart';
 export 'src/settings_definition.dart';
@@ -143,8 +151,30 @@ enum ManifestIntent {
   update,
 }
 
-/// Validation status for manifest verification
-enum ValidationStatus { valid, invalid, unknown }
+/// Validation state of a manifest store, from the SDK's `validation_state`.
+enum ValidationStatus {
+  /// The manifest store is well formed and its signature verifies, but the
+  /// signing certificate does not chain to a trust anchor in the settings.
+  valid,
+
+  /// As [valid], and the signing certificate is trusted.
+  trusted,
+
+  /// Validation found at least one failure.
+  invalid,
+
+  /// The SDK reported no validation state.
+  unknown;
+
+  /// Parses the SDK's `validation_state` (`Valid`, `Trusted`, `Invalid`).
+  static ValidationStatus fromState(String? state) =>
+      switch (state?.toLowerCase()) {
+        'valid' => ValidationStatus.valid,
+        'trusted' => ValidationStatus.trusted,
+        'invalid' => ValidationStatus.invalid,
+        _ => ValidationStatus.unknown,
+      };
+}
 
 // =============================================================================
 // Signer Types
@@ -645,16 +675,21 @@ class SignatureInfo {
       expiresAt: map['expires_at'] != null
           ? DateTime.tryParse(map['expires_at'] as String)
           : null,
-      algorithm: algStr != null
-          ? SigningAlgorithm.values.firstWhere(
-              (e) => e.name.toLowerCase() == algStr.toLowerCase(),
-              orElse: () => SigningAlgorithm.es256,
-            )
-          : null,
+      algorithm: _parseAlgorithm(algStr),
       serialNumber:
           map['serial_number'] as String? ??
           map['cert_serial_number'] as String?,
     );
+  }
+
+  /// Null when the algorithm is absent or not one of [SigningAlgorithm].
+  static SigningAlgorithm? _parseAlgorithm(String? name) {
+    if (name == null) return null;
+    final normalized = name.toLowerCase();
+    for (final algorithm in SigningAlgorithm.values) {
+      if (algorithm.name == normalized) return algorithm;
+    }
+    return null;
   }
 }
 
@@ -714,6 +749,9 @@ class AssertionInfo {
   }
 }
 
+String? _thumbnailIdentifier(Object? thumbnail) =>
+    thumbnail is Map ? thumbnail['identifier'] as String? : null;
+
 /// Information about an ingredient in a manifest
 @immutable
 class IngredientInfo {
@@ -764,7 +802,7 @@ class IngredientInfo {
       instanceId: map['instance_id'] as String?,
       documentId: map['document_id'] as String?,
       relationship: relationship,
-      thumbnailUri: map['thumbnail']?['identifier'] as String?,
+      thumbnailUri: _thumbnailIdentifier(map['thumbnail']),
       manifest: map['manifest'] != null
           ? ManifestInfo.fromMap(map['manifest'] as Map<String, dynamic>)
           : null,
@@ -772,7 +810,7 @@ class IngredientInfo {
     );
   }
 
-  static ValidationStatus _parseValidationStatus(dynamic status) {
+  static ValidationStatus _parseValidationStatus(Object? status) {
     if (status == null) return ValidationStatus.unknown;
     if (status is String) {
       switch (status.toLowerCase()) {
@@ -850,7 +888,7 @@ class ManifestInfo {
               ?.map((i) => IngredientInfo.fromMap(i as Map<String, dynamic>))
               .toList() ??
           [],
-      thumbnailUri: map['thumbnail']?['identifier'] as String?,
+      thumbnailUri: _thumbnailIdentifier(map['thumbnail']),
     );
   }
 }
@@ -909,7 +947,11 @@ class ManifestStoreInfo {
     );
   }
 
+  /// Uses the SDK's `validation_state` when present. Without it, any
+  /// `validation_status` entry counts as a failure.
   static ValidationStatus _determineValidationStatus(Map<String, dynamic> map) {
+    final state = map['validation_state'] as String?;
+    if (state != null) return ValidationStatus.fromState(state);
     final errors = map['validation_status'] as List<dynamic>?;
     if (errors == null) return ValidationStatus.unknown;
     if (errors.isEmpty) return ValidationStatus.valid;
@@ -1040,8 +1082,9 @@ class BuilderOptions {
   Map<String, dynamic> toMap() {
     final map = <String, dynamic>{'embed': embed};
     if (intent != null) map['intent'] = intent!.name;
-    if (digitalSourceType != null)
+    if (digitalSourceType != null) {
       map['digitalSourceType'] = digitalSourceType!.url;
+    }
     if (remoteUrl != null) map['remoteUrl'] = remoteUrl;
     return map;
   }
@@ -1123,17 +1166,20 @@ class BuilderArchive {
 /// final builder = await c2pa.createBuilder(manifestJson);
 ///
 /// // Set the intent (required)
-/// builder.setIntent(ManifestIntent.create, DigitalSourceType.digitalCapture);
+/// await builder.setIntent(
+///   ManifestIntent.create,
+///   DigitalSourceType.digitalCapture,
+/// );
 ///
 /// // Sign and get result
 /// final result = await builder.sign(
 ///   sourceData: imageBytes,
 ///   mimeType: 'image/jpeg',
-///   signerInfo: signerInfo,
+///   signer: signer,
 /// );
 ///
 /// // Always dispose when done
-/// builder.dispose();
+/// await builder.dispose();
 /// ```
 ///
 /// ## Adding Ingredients
@@ -1141,7 +1187,7 @@ class BuilderArchive {
 /// For edit operations, add parent or component ingredients:
 ///
 /// ```dart
-/// builder.setIntent(ManifestIntent.edit);
+/// await builder.setIntent(ManifestIntent.edit);
 /// await builder.addIngredient(
 ///   data: parentImageBytes,
 ///   mimeType: 'image/jpeg',
@@ -1149,24 +1195,33 @@ class BuilderArchive {
 /// );
 /// ```
 ///
+/// ## Ordering
+///
+/// Calls on one builder run in the order they are made, even when they are
+/// not awaited individually. A failure is reported by the call that failed.
+///
 /// ## Important
 ///
-/// Always call [dispose] when finished to release native resources.
+/// Call [dispose] when finished to release native resources promptly. A
+/// builder that is garbage collected without [dispose] is released then.
 abstract class ManifestBuilder {
   /// The unique handle for this builder (for internal use)
   int get handle;
 
   /// Set the builder intent
-  void setIntent(ManifestIntent intent, [DigitalSourceType? digitalSourceType]);
+  Future<void> setIntent(
+    ManifestIntent intent, [
+    DigitalSourceType? digitalSourceType,
+  ]);
 
   /// Disable embedding the manifest in the asset
-  void setNoEmbed();
+  Future<void> setNoEmbed();
 
   /// Set a remote URL for cloud-based manifests
-  void setRemoteUrl(String url);
+  Future<void> setRemoteUrl(String url);
 
   /// Add an action to the manifest
-  void addAction(ActionConfig action);
+  Future<void> addAction(ActionConfig action);
 
   /// Set the base directory that relative resource paths in the manifest
   /// definition are resolved against.
@@ -1277,8 +1332,9 @@ abstract class ManifestBuilder {
     bool largeSize = false,
   });
 
-  /// Dispose of native resources
-  void dispose();
+  /// Release the native builder once every earlier call has finished.
+  /// Further calls throw [StateError]. Calling it again does nothing.
+  Future<void> dispose();
 }
 
 // =============================================================================
@@ -1300,17 +1356,30 @@ abstract class ManifestBuilder {
 /// // Use with context or builder
 /// final context = await C2paContext.fromSettings(settings);
 ///
-/// // Always dispose when done
-/// settings.dispose();
+/// // Dispose when done
+/// await settings.dispose();
 /// ```
+///
+/// Settings that are garbage collected without [dispose] are released then.
 class C2paSettings {
   final int _handle;
   bool _disposed = false;
 
-  C2paSettings._(this._handle);
+  static final Finalizer<int> _finalizer = Finalizer<int>(
+    (handle) => unawaited(
+      C2paPlatform.instance.settingsDispose(handle).catchError((Object _) {}),
+    ),
+  );
+
+  C2paSettings._(this._handle) {
+    _finalizer.attach(this, _handle, detach: this);
+  }
 
   /// The native handle for this settings object (for internal use).
-  int get handle => _handle;
+  int get handle {
+    _checkDisposed();
+    return _handle;
+  }
 
   /// Create a new empty settings instance with defaults.
   static Future<C2paSettings> create() async {
@@ -1354,13 +1423,13 @@ class C2paSettings {
 
   /// Set an individual setting value using dot notation.
   ///
-  /// Example: `await settings.setValue('verify.verify_trust', 'false');`
+  /// [value] is any JSON value: a bool, number, string, list or map.
   ///
-  /// **Platform note.** Both platforms accept the value as a JSON-compatible
-  /// primitive, but the Android plugin currently only widens to String at the
-  /// channel boundary. Pass values as strings for cross-platform safety
-  /// (e.g. `'true'`, `'42'`, `'es256'`).
-  Future<void> setValue(String path, String value) {
+  /// ```dart
+  /// await settings.setValue('verify.verify_trust', false);
+  /// await settings.setValue('signer.local.alg', 'es256');
+  /// ```
+  Future<void> setValue(String path, Object value) {
     _checkDisposed();
     return C2paPlatform.instance.settingsSetValue(_handle, path, value);
   }
@@ -1371,12 +1440,13 @@ class C2paSettings {
     }
   }
 
-  /// Dispose of native resources.
-  void dispose() {
-    if (!_disposed) {
-      _disposed = true;
-      C2paPlatform.instance.settingsDispose(_handle);
-    }
+  /// Release the native settings. Contexts and builders already created
+  /// from them keep their own copy. Calling it again does nothing.
+  Future<void> dispose() async {
+    if (_disposed) return;
+    _disposed = true;
+    _finalizer.detach(this);
+    await C2paPlatform.instance.settingsDispose(_handle);
   }
 }
 
@@ -1405,14 +1475,25 @@ class C2paSettings {
 /// final builder = await c2pa.createBuilderFromContext(context, manifestJson);
 /// final signed = await builder.sign(sourceData: bytes, mimeType: 'image/jpeg');
 ///
-/// builder.dispose();
-/// context.dispose();
+/// await builder.dispose();
+/// await context.dispose();
 /// ```
+///
+/// A context that is garbage collected without [dispose] is released then.
+/// Keep a reference for as long as its callbacks should run.
 class C2paContext {
   final int _handle;
   bool _disposed = false;
 
-  C2paContext._(this._handle);
+  static final Finalizer<int> _finalizer = Finalizer<int>(
+    (handle) => unawaited(
+      C2paPlatform.instance.contextDispose(handle).catchError((Object _) {}),
+    ),
+  );
+
+  C2paContext._(this._handle) {
+    _finalizer.attach(this, _handle, detach: this);
+  }
 
   /// The native handle for this context (for internal use).
   int get handle {
@@ -1465,14 +1546,14 @@ class C2paContext {
     }
   }
 
-  /// Dispose of native resources. Readers and builders already created on
-  /// the context keep working, but its progress callback and HTTP resolver
-  /// stop.
-  void dispose() {
-    if (!_disposed) {
-      _disposed = true;
-      C2paPlatform.instance.contextDispose(_handle);
-    }
+  /// Release the native context. Readers and builders already created on
+  /// it keep working, but its progress callback and HTTP resolver stop.
+  /// Calling it again does nothing.
+  Future<void> dispose() async {
+    if (_disposed) return;
+    _disposed = true;
+    _finalizer.detach(this);
+    await C2paPlatform.instance.contextDispose(_handle);
   }
 }
 
@@ -1518,6 +1599,22 @@ class CertificateConfig {
   }
 }
 
+/// Result of [C2pa.enrollHardwareKey].
+@immutable
+class HardwareKeyEnrollment {
+  /// The alias of the enrolled key.
+  final String keyAlias;
+
+  /// The PEM certificate chain the signing server issued for the key, ready
+  /// for a [HardwareSigner] or [KeystoreSigner].
+  final String certificateChainPem;
+
+  const HardwareKeyEnrollment({
+    required this.keyAlias,
+    required this.certificateChainPem,
+  });
+}
+
 // =============================================================================
 // C2PA Main Class
 // =============================================================================
@@ -1542,8 +1639,8 @@ class CertificateConfig {
 ///
 /// ```dart
 /// final store = await c2pa.readManifestFromFile('/path/to/image.jpg');
-/// if (store != null && store.validationStatus == ValidationStatus.valid) {
-///   print('Valid manifest from: ${store.active?.claimGenerator}');
+/// if (store.validationStatus == ValidationStatus.trusted) {
+///   print('Trusted manifest from: ${store.active?.claimGenerator}');
 /// }
 /// ```
 ///
@@ -1553,9 +1650,12 @@ class CertificateConfig {
 ///
 /// ```dart
 /// final builder = await c2pa.createBuilder('{"title": "My Image"}');
-/// builder.setIntent(ManifestIntent.create, DigitalSourceType.digitalCapture);
+/// await builder.setIntent(
+///   ManifestIntent.create,
+///   DigitalSourceType.digitalCapture,
+/// );
 /// final result = await builder.sign(...);
-/// builder.dispose();
+/// await builder.dispose();
 /// ```
 ///
 /// ## See Also
@@ -1582,17 +1682,17 @@ class C2pa {
   // Reader API - Basic
   // ===========================================================================
 
-  /// Read C2PA manifest from a file path
+  /// Read the manifest store of the file at [path] as JSON.
   ///
-  /// Returns the manifest JSON string, or null if no manifest found.
-  Future<String?> readFile(String path) {
+  /// Throws [C2paManifestNotFoundException] when the file has no manifest.
+  Future<String> readFile(String path) {
     return C2paPlatform.instance.readFile(path);
   }
 
-  /// Read C2PA manifest from byte data
+  /// Read the manifest store in [data] as JSON.
   ///
-  /// Returns the manifest JSON string, or null if no manifest found.
-  Future<String?> readBytes(Uint8List data, String mimeType) {
+  /// Throws [C2paManifestNotFoundException] when the data has no manifest.
+  Future<String> readBytes(Uint8List data, String mimeType) {
     return C2paPlatform.instance.readBytes(data, mimeType);
   }
 
@@ -1600,10 +1700,10 @@ class C2pa {
   // Reader API - Enhanced
   // ===========================================================================
 
-  /// Read manifest from a file with detailed information
+  /// Read and parse the manifest store of the file at [path].
   ///
-  /// Returns a [ManifestStoreInfo] with parsed manifest data and validation info.
-  Future<ManifestStoreInfo?> readManifestFromFile(
+  /// Throws [C2paManifestNotFoundException] when the file has no manifest.
+  Future<ManifestStoreInfo> readManifestFromFile(
     String path, {
     ReaderOptions options = const ReaderOptions(),
   }) async {
@@ -1612,14 +1712,13 @@ class C2pa {
       options.detailed,
       contextHandle: options.context?.handle,
     );
-    if (json == null) return null;
     return ManifestStoreInfo.fromJson(json);
   }
 
-  /// Read manifest from bytes with detailed information
+  /// Read and parse the manifest store in [data].
   ///
-  /// Returns a [ManifestStoreInfo] with parsed manifest data and validation info.
-  Future<ManifestStoreInfo?> readManifestFromBytes(
+  /// Throws [C2paManifestNotFoundException] when the data has no manifest.
+  Future<ManifestStoreInfo> readManifestFromBytes(
     Uint8List data,
     String mimeType, {
     ReaderOptions options = const ReaderOptions(),
@@ -1630,14 +1729,14 @@ class C2pa {
       options.detailed,
       contextHandle: options.context?.handle,
     );
-    if (json == null) return null;
     return ManifestStoreInfo.fromJson(json);
   }
 
-  /// Extract a resource (thumbnail, etc.) from manifest data
+  /// Extract a resource (thumbnail, etc.) from the manifest store in [data].
   ///
-  /// The [uri] should match an identifier from the manifest JSON.
-  Future<Uint8List?> extractResource(
+  /// The [uri] should match an identifier from the manifest JSON. Throws
+  /// [C2paManifestNotFoundException] when [data] has no manifest.
+  Future<Uint8List> extractResource(
     Uint8List data,
     String mimeType,
     String uri, {
@@ -1733,18 +1832,18 @@ class C2pa {
     return ManifestStoreInfo.fromJson(json);
   }
 
-  /// Return the remote manifest URL embedded in the file at [path], if any.
+  /// Return the remote manifest URL referenced by the file at [path].
   ///
-  /// Returns null when the asset has no manifest or when the manifest is
-  /// embedded (no remote reference).
+  /// Returns null when the manifest is embedded rather than referenced.
+  /// Throws [C2paManifestNotFoundException] when the file has no manifest.
   Future<String?> getRemoteUrl(String path, {String? mimeType}) {
     return C2paPlatform.instance.getRemoteUrl(path, mimeType: mimeType);
   }
 
-  /// Return whether the manifest at [path] is embedded in the file itself.
+  /// Return whether the manifest at [path] is embedded in the file itself
+  /// (false when it is only referenced remotely).
   ///
-  /// Returns false when no manifest is present or the manifest is stored
-  /// remotely and only referenced from the asset.
+  /// Throws [C2paManifestNotFoundException] when the file has no manifest.
   Future<bool> isManifestEmbedded(String path, {String? mimeType}) {
     return C2paPlatform.instance.isManifestEmbedded(path, mimeType: mimeType);
   }
@@ -1867,9 +1966,10 @@ class C2pa {
   /// For [KeystoreSigner]: Creates a key in Android Keystore or iOS Keychain.
   /// For [HardwareSigner]: Creates a key in StrongBox or Secure Enclave.
   ///
-  /// The [algorithm] parameter is ignored for hardware keys (always ES256).
-  ///
-  /// Throws if the key already exists or cannot be created.
+  /// Software keys are EC keys on the curve [algorithm] names: P-256 for
+  /// [SigningAlgorithm.es256], P-384 for es384 and P-521 for es512. Hardware
+  /// keys are always P-256, so [useHardware] requires es256. Any other
+  /// algorithm throws [C2paInvalidArgumentException].
   Future<void> createKey({
     required String keyAlias,
     SigningAlgorithm algorithm = SigningAlgorithm.es256,
@@ -1956,30 +2056,32 @@ class C2pa {
   /// This creates a hardware key (if it doesn't exist), generates a CSR,
   /// submits it to the signing server, and returns the certificate chain.
   ///
-  /// Returns a map containing:
-  /// - `certificateChain`: The PEM-encoded certificate chain from the server
-  /// - `keyAlias`: The key alias used
+  /// Returns the certificate chain the server issued for the key.
   ///
   /// The CSR is posted as `{"csr": ...}` to
   /// `<signingServerUrl>/api/v1/certificates/sign`, which must answer with
   /// `{"certificate_chain": ...}`. On iOS the key is created in the Secure
   /// Enclave on devices and in the keychain in the simulator; [useStrongBox]
   /// only applies to Android.
-  Future<Map<String, dynamic>> enrollHardwareKey({
+  Future<HardwareKeyEnrollment> enrollHardwareKey({
     required String keyAlias,
     required String signingServerUrl,
     String? bearerToken,
     String? commonName,
     String? organization,
     bool useStrongBox = false,
-  }) {
-    return C2paPlatform.instance.enrollHardwareKey(
+  }) async {
+    final result = await C2paPlatform.instance.enrollHardwareKey(
       keyAlias: keyAlias,
       signingServerUrl: signingServerUrl,
       bearerToken: bearerToken,
       commonName: commonName,
       organization: organization,
       useStrongBox: useStrongBox,
+    );
+    return HardwareKeyEnrollment(
+      keyAlias: result['keyAlias'] as String? ?? keyAlias,
+      certificateChainPem: result['certificateChain'] as String,
     );
   }
 
@@ -1996,29 +2098,6 @@ class C2pa {
   /// The [format] should be "json" or "toml".
   Future<void> loadSettings(String settings, {String format = 'json'}) {
     return C2paPlatform.instance.loadSettings(settings, format);
-  }
-
-  // ===========================================================================
-  // Enhanced Reader API
-  // ===========================================================================
-
-  /// Read manifest from a file using a shared [C2paContext].
-  ///
-  /// This allows reading with custom settings configured via
-  /// [C2paSettings] and [C2paContext].
-  Future<ManifestStoreInfo?> readManifestFromFileWithContext(
-    String path,
-    C2paContext context, {
-    ReaderOptions options = const ReaderOptions(),
-  }) async {
-    context._checkDisposed();
-    final json = await C2paPlatform.instance.readFileWithContext(
-      path,
-      context._handle,
-      options.detailed,
-    );
-    if (json == null) return null;
-    return ManifestStoreInfo.fromJson(json);
   }
 
   // ===========================================================================

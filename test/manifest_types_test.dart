@@ -402,7 +402,7 @@ void main() {
 
       final json = assertion.toJson();
       expect(json['label'], 'c2pa.actions');
-      expect((json['data'] as Map)['actions'], isA<List>());
+      expect((json['data'] as Map)['actions'], isA<List<dynamic>>());
     });
 
     test('CreativeWorkAssertion serializes correctly', () {
@@ -543,7 +543,7 @@ void main() {
 
       final json = manifest.toJson();
       expect(json['claim_generator'], 'App/1.0');
-      expect(json['claim_generator_info'], isA<List>());
+      expect(json['claim_generator_info'], isA<List<dynamic>>());
     });
   });
 

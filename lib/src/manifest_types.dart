@@ -554,7 +554,9 @@ class Shape {
           ?.map((v) => Coordinate.fromJson(v as Map<String, dynamic>))
           .toList(),
       inside: json['inside'] as bool?,
-      unit: json['unit'] != null ? UnitType.fromJson(json['unit']) : null,
+      unit: json['unit'] != null
+          ? UnitType.fromJson(json['unit'] as String)
+          : null,
     );
   }
 }

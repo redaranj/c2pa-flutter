@@ -55,33 +55,26 @@ abstract class C2paPlatform extends PlatformInterface {
   // ===========================================================================
 
   /// Reads the manifest store JSON from the file at [path].
-  Future<String?> readFile(String path) => _unimplemented('readFile');
+  Future<String> readFile(String path) => _unimplemented('readFile');
 
   /// Reads the manifest store JSON from [data].
-  Future<String?> readBytes(Uint8List data, String mimeType) =>
+  Future<String> readBytes(Uint8List data, String mimeType) =>
       _unimplemented('readBytes');
 
   /// Reads the manifest store JSON (detailed when [detailed]) from a file.
-  Future<String?> readFileDetailed(
+  Future<String> readFileDetailed(
     String path,
     bool detailed, {
     int? contextHandle,
   }) => _unimplemented('readFileDetailed');
 
   /// Reads the manifest store JSON (detailed when [detailed]) from bytes.
-  Future<String?> readBytesDetailed(
+  Future<String> readBytesDetailed(
     Uint8List data,
     String mimeType,
     bool detailed, {
     int? contextHandle,
   }) => _unimplemented('readBytesDetailed');
-
-  /// Reads a file through the context [contextHandle].
-  Future<String?> readFileWithContext(
-    String path,
-    int contextHandle,
-    bool detailed,
-  ) => _unimplemented('readFileWithContext');
 
   /// Reads the manifest store as crJSON from a file ([path]) or bytes
   /// ([data] with [mimeType]).
@@ -112,7 +105,7 @@ abstract class C2paPlatform extends PlatformInterface {
   }) => _unimplemented('readFragment');
 
   /// Extracts the resource [uri] from the manifest store in [data].
-  Future<Uint8List?> extractResource(
+  Future<Uint8List> extractResource(
     Uint8List data,
     String mimeType,
     String uri, {
@@ -366,7 +359,7 @@ abstract class C2paPlatform extends PlatformInterface {
     String format,
   ) => _unimplemented('settingsUpdateFromString');
 
-  Future<void> settingsSetValue(int handle, String path, String value) =>
+  Future<void> settingsSetValue(int handle, String path, Object value) =>
       _unimplemented('settingsSetValue');
 
   Future<void> settingsDispose(int handle) => _unimplemented('settingsDispose');

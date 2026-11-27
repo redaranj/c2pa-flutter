@@ -117,18 +117,31 @@ class MockC2paPlatform extends C2paPlatform with MockPlatformInterfaceMixin {
   // Reader API - Basic
   // =============================================================================
 
-  @override
-  Future<String?> readFile(String path) async {
-    _recordCall('readFile', {'path': path});
-    _checkError();
-    return mockManifestJson ?? _generateMockManifestJson(path);
+  /// When true, every read throws [C2paManifestNotFoundException], as the
+  /// native SDKs do for an asset without content credentials.
+  bool mockNoManifest = false;
+
+  String _manifestOrThrow(String source) {
+    if (mockNoManifest) {
+      throw const C2paManifestNotFoundException(
+        'ManifestNotFound: no JUMBF data found',
+      );
+    }
+    return mockManifestJson ?? _generateMockManifestJson(source);
   }
 
   @override
-  Future<String?> readBytes(Uint8List data, String mimeType) async {
+  Future<String> readFile(String path) async {
+    _recordCall('readFile', {'path': path});
+    _checkError();
+    return _manifestOrThrow(path);
+  }
+
+  @override
+  Future<String> readBytes(Uint8List data, String mimeType) async {
     _recordCall('readBytes', {'dataLength': data.length, 'mimeType': mimeType});
     _checkError();
-    return mockManifestJson ?? _generateMockManifestJson('bytes');
+    return _manifestOrThrow('bytes');
   }
 
   /// Remote URL returned by the mock for [getRemoteUrl]; null means embedded manifest.
@@ -156,7 +169,7 @@ class MockC2paPlatform extends C2paPlatform with MockPlatformInterfaceMixin {
   // =============================================================================
 
   @override
-  Future<String?> readFileDetailed(
+  Future<String> readFileDetailed(
     String path,
     bool detailed, {
     int? contextHandle,
@@ -167,11 +180,11 @@ class MockC2paPlatform extends C2paPlatform with MockPlatformInterfaceMixin {
       'contextHandle': contextHandle,
     });
     _checkError();
-    return mockManifestJson ?? _generateMockManifestJson(path);
+    return _manifestOrThrow(path);
   }
 
   @override
-  Future<String?> readBytesDetailed(
+  Future<String> readBytesDetailed(
     Uint8List data,
     String mimeType,
     bool detailed, {
@@ -184,11 +197,11 @@ class MockC2paPlatform extends C2paPlatform with MockPlatformInterfaceMixin {
       'contextHandle': contextHandle,
     });
     _checkError();
-    return mockManifestJson ?? _generateMockManifestJson('bytes');
+    return _manifestOrThrow('bytes');
   }
 
   @override
-  Future<Uint8List?> extractResource(
+  Future<Uint8List> extractResource(
     Uint8List data,
     String mimeType,
     String uri, {
@@ -766,7 +779,7 @@ class MockC2paPlatform extends C2paPlatform with MockPlatformInterfaceMixin {
   }
 
   @override
-  Future<void> settingsSetValue(int handle, String path, String value) async {
+  Future<void> settingsSetValue(int handle, String path, Object value) async {
     _recordCall('settingsSetValue', {
       'handle': handle,
       'path': path,
@@ -823,25 +836,6 @@ class MockC2paPlatform extends C2paPlatform with MockPlatformInterfaceMixin {
   Future<void> contextDispose(int handle) async {
     _recordCall('contextDispose', {'handle': handle});
     contexts.remove(handle);
-  }
-
-  // =============================================================================
-  // Enhanced Reader API - Context-based
-  // =============================================================================
-
-  @override
-  Future<String?> readFileWithContext(
-    String path,
-    int contextHandle,
-    bool detailed,
-  ) async {
-    _recordCall('readFileWithContext', {
-      'path': path,
-      'contextHandle': contextHandle,
-      'detailed': detailed,
-    });
-    _checkError();
-    return mockManifestJson ?? _generateMockManifestJson(path);
   }
 
   // =============================================================================
@@ -925,10 +919,10 @@ class MockC2paPlatform extends C2paPlatform with MockPlatformInterfaceMixin {
               },
             },
           ],
-          'ingredients': [],
+          'ingredients': <Object>[],
         },
       },
-      'validation_status': [],
+      'validation_status': <Object>[],
     });
   }
 }
@@ -973,23 +967,23 @@ class MockBuilder implements ManifestBuilder {
   }
 
   @override
-  void setIntent(
+  Future<void> setIntent(
     ManifestIntent intent, [
     DigitalSourceType? digitalSourceType,
-  ]) {
+  ]) async {
     _checkDisposed();
     this.intent = intent;
     this.digitalSourceType = digitalSourceType;
   }
 
   @override
-  void setNoEmbed() {
+  Future<void> setNoEmbed() async {
     _checkDisposed();
     noEmbed = true;
   }
 
   @override
-  void setRemoteUrl(String url) {
+  Future<void> setRemoteUrl(String url) async {
     _checkDisposed();
     remoteUrl = url;
   }
@@ -1049,7 +1043,7 @@ class MockBuilder implements ManifestBuilder {
   }
 
   @override
-  void addAction(ActionConfig action) {
+  Future<void> addAction(ActionConfig action) async {
     _checkDisposed();
     actions.add(action.toJson());
   }
@@ -1156,11 +1150,10 @@ class MockBuilder implements ManifestBuilder {
   }
 
   @override
-  void dispose() {
-    if (!_disposed) {
-      _disposed = true;
-      _platform.builderDispose(_handle);
-    }
+  Future<void> dispose() async {
+    if (_disposed) return;
+    _disposed = true;
+    await _platform.builderDispose(_handle);
   }
 }
 
@@ -1178,7 +1171,7 @@ class MockSettings {
   final int handle;
   String? settingsStr;
   String? format;
-  final Map<String, String> values = {};
+  final Map<String, Object> values = {};
 
   MockSettings(this.handle);
 }

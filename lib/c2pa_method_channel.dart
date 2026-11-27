@@ -11,6 +11,7 @@ each license.
 */
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -31,10 +32,27 @@ class _ContextCallbacks {
   });
 }
 
+/// A [MethodChannel] that reports every native failure as a
+/// [C2paException] instead of a raw [PlatformException].
+class C2paMethodChannel extends MethodChannel {
+  const C2paMethodChannel(super.name);
+
+  @override
+  Future<T?> invokeMethod<T>(String method, [dynamic arguments]) async {
+    try {
+      return await super.invokeMethod<T>(method, arguments);
+    } on PlatformException catch (e) {
+      throw C2paException.fromPlatformException(e);
+    }
+  }
+}
+
 /// Method channel implementation of [C2paPlatform]
 class MethodChannelC2pa extends C2paPlatform {
   @visibleForTesting
-  final methodChannel = const MethodChannel('org.guardianproject.c2pa');
+  final MethodChannel methodChannel = const C2paMethodChannel(
+    'org.guardianproject.c2pa',
+  );
 
   final Map<String, Future<Uint8List> Function(Uint8List)> _signCallbacks = {};
   final Map<int, _ContextCallbacks> _contextCallbacks = {};
@@ -119,7 +137,7 @@ class MethodChannelC2pa extends C2paPlatform {
   Future<T> _invoke<T>(String method, [Map<String, dynamic>? arguments]) async {
     final result = await methodChannel.invokeMethod<T>(method, arguments);
     if (result == null) {
-      throw PlatformException(code: 'ERROR', message: '$method returned null');
+      throw C2paPlatformException('ERROR', '$method returned null');
     }
     return result;
   }
@@ -141,46 +159,35 @@ class MethodChannelC2pa extends C2paPlatform {
   // ===========================================================================
 
   @override
-  Future<String?> readFile(String path) =>
-      methodChannel.invokeMethod<String>('readFile', {'path': path});
+  Future<String> readFile(String path) =>
+      _invoke<String>('readFile', {'path': path});
 
   @override
-  Future<String?> readBytes(Uint8List data, String mimeType) => methodChannel
-      .invokeMethod<String>('readBytes', {'data': data, 'mimeType': mimeType});
+  Future<String> readBytes(Uint8List data, String mimeType) =>
+      _invoke<String>('readBytes', {'data': data, 'mimeType': mimeType});
 
   @override
-  Future<String?> readFileDetailed(
+  Future<String> readFileDetailed(
     String path,
     bool detailed, {
     int? contextHandle,
-  }) => methodChannel.invokeMethod<String>('readFileDetailed', {
+  }) => _invoke<String>('readFileDetailed', {
     'path': path,
     'detailed': detailed,
     'contextHandle': contextHandle,
   });
 
   @override
-  Future<String?> readBytesDetailed(
+  Future<String> readBytesDetailed(
     Uint8List data,
     String mimeType,
     bool detailed, {
     int? contextHandle,
-  }) => methodChannel.invokeMethod<String>('readBytesDetailed', {
+  }) => _invoke<String>('readBytesDetailed', {
     'data': data,
     'mimeType': mimeType,
     'detailed': detailed,
     'contextHandle': contextHandle,
-  });
-
-  @override
-  Future<String?> readFileWithContext(
-    String path,
-    int contextHandle,
-    bool detailed,
-  ) => methodChannel.invokeMethod<String>('readFileWithContext', {
-    'path': path,
-    'contextHandle': contextHandle,
-    'detailed': detailed,
   });
 
   @override
@@ -239,12 +246,12 @@ class MethodChannelC2pa extends C2paPlatform {
   });
 
   @override
-  Future<Uint8List?> extractResource(
+  Future<Uint8List> extractResource(
     Uint8List data,
     String mimeType,
     String uri, {
     int? contextHandle,
-  }) => methodChannel.invokeMethod<Uint8List>('extractResource', {
+  }) => _invoke<Uint8List>('extractResource', {
     'data': data,
     'mimeType': mimeType,
     'uri': uri,
@@ -732,11 +739,11 @@ class MethodChannelC2pa extends C2paPlatform {
   });
 
   @override
-  Future<void> settingsSetValue(int handle, String path, String value) =>
+  Future<void> settingsSetValue(int handle, String path, Object value) =>
       methodChannel.invokeMethod<void>('settingsSetValue', {
         'handle': handle,
         'path': path,
-        'value': value,
+        'value': jsonEncode(value),
       });
 
   @override
@@ -795,23 +802,34 @@ class MethodChannelC2pa extends C2paPlatform {
   }
 }
 
+/// Releases the native builder of a [MethodChannelManifestBuilder] that was
+/// garbage collected without [MethodChannelManifestBuilder.dispose].
+final Finalizer<int> _builderFinalizer = Finalizer<int>(
+  (handle) => unawaited(
+    C2paPlatform.instance.builderDispose(handle).catchError((Object _) {}),
+  ),
+);
+
 /// Method channel implementation of [ManifestBuilder].
 ///
-/// Synchronous configuration calls ([setIntent], [setNoEmbed],
-/// [setRemoteUrl], [addAction]) are queued and sent before the next
-/// asynchronous builder call, so they always reach the native builder in the
-/// order they were made.
+/// Calls run one after another in the order they were made, whether or not
+/// the caller awaits each one, so a [sign] issued straight after an
+/// un-awaited [addIngredient] still sees the ingredient.
 class MethodChannelManifestBuilder implements ManifestBuilder {
   final MethodChannelC2pa _platform;
   final int _handle;
   bool _disposed = false;
+  Future<void> _tail = Future<void>.value();
 
-  final List<Future<void> Function()> _pending = [];
-
-  MethodChannelManifestBuilder(this._platform, this._handle);
+  MethodChannelManifestBuilder(this._platform, this._handle) {
+    _builderFinalizer.attach(this, _handle, detach: this);
+  }
 
   @override
-  int get handle => _handle;
+  int get handle {
+    _checkDisposed();
+    return _handle;
+  }
 
   void _checkDisposed() {
     if (_disposed) {
@@ -819,46 +837,33 @@ class MethodChannelManifestBuilder implements ManifestBuilder {
     }
   }
 
-  Future<void> _flush() async {
+  /// Runs [body] after every earlier call on this builder has finished.
+  Future<T> _run<T>(Future<T> Function() body) {
     _checkDisposed();
-    while (_pending.isNotEmpty) {
-      await _pending.removeAt(0)();
-    }
-  }
-
-  Future<T> _run<T>(Future<T> Function() body) async {
-    await _flush();
-    return body();
+    final result = _tail.then((_) => body());
+    _tail = result.then<void>((_) {}, onError: (Object _) {});
+    return result;
   }
 
   @override
-  void setIntent(
+  Future<void> setIntent(
     ManifestIntent intent, [
     DigitalSourceType? digitalSourceType,
-  ]) {
-    _checkDisposed();
-    _pending.add(
-      () => _platform.builderSetIntent(_handle, intent, digitalSourceType),
-    );
-  }
+  ]) => _run(
+    () => _platform.builderSetIntent(_handle, intent, digitalSourceType),
+  );
 
   @override
-  void setNoEmbed() {
-    _checkDisposed();
-    _pending.add(() => _platform.builderSetNoEmbed(_handle));
-  }
+  Future<void> setNoEmbed() => _run(() => _platform.builderSetNoEmbed(_handle));
 
   @override
-  void setRemoteUrl(String url) {
-    _checkDisposed();
-    _pending.add(() => _platform.builderSetRemoteUrl(_handle, url));
-  }
+  Future<void> setRemoteUrl(String url) =>
+      _run(() => _platform.builderSetRemoteUrl(_handle, url));
 
   @override
-  void addAction(ActionConfig action) {
-    _checkDisposed();
+  Future<void> addAction(ActionConfig action) {
     final json = action.toJson();
-    _pending.add(() => _platform.builderAddAction(_handle, json));
+    return _run(() => _platform.builderAddAction(_handle, json));
   }
 
   @override
@@ -985,13 +990,11 @@ class MethodChannelManifestBuilder implements ManifestBuilder {
   );
 
   @override
-  void dispose() {
-    if (!_disposed) {
-      _disposed = true;
-      _pending.clear();
-      // The native side runs builder calls in order on one worker, so this
-      // dispose is processed only after every call already sent completes.
-      _platform.builderDispose(_handle);
-    }
+  Future<void> dispose() async {
+    if (_disposed) return;
+    _disposed = true;
+    _builderFinalizer.detach(this);
+    await _tail;
+    await _platform.builderDispose(_handle);
   }
 }

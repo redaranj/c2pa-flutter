@@ -59,7 +59,7 @@ void main() {
 
     test('create rejects disposed settings', () async {
       final settings = await C2paSettings.create();
-      settings.dispose();
+      await settings.dispose();
       expect(() => C2paContext.create(settings: settings), throwsStateError);
     });
 
@@ -71,7 +71,7 @@ void main() {
 
     test('a disposed context can no longer be used', () async {
       final context = await C2paContext.create();
-      context.dispose();
+      await context.dispose();
       expect(() => context.handle, throwsStateError);
       expect(context.cancel, throwsStateError);
     });

@@ -94,9 +94,29 @@ void main() {
   group('Reader API - Enhanced', () {
     test('readManifestFromFile returns ManifestStoreInfo', () async {
       final result = await c2pa.readManifestFromFile('/path/to/image.jpg');
-      expect(result, isNotNull);
-      expect(result!.activeManifest, isNotNull);
+      expect(result.activeManifest, isNotNull);
       expect(result.manifests, isNotEmpty);
+    });
+
+    test('reads of an asset without a manifest throw', () async {
+      mockPlatform.mockNoManifest = true;
+      final data = Uint8List.fromList([0xFF, 0xD8, 0xFF, 0xE0]);
+      await expectLater(
+        c2pa.readFile('/path/to/unsigned.jpg'),
+        throwsA(isA<C2paManifestNotFoundException>()),
+      );
+      await expectLater(
+        c2pa.readBytes(data, 'image/jpeg'),
+        throwsA(isA<C2paManifestNotFoundException>()),
+      );
+      await expectLater(
+        c2pa.readManifestFromFile('/path/to/unsigned.jpg'),
+        throwsA(isA<C2paManifestNotFoundException>()),
+      );
+      await expectLater(
+        c2pa.readManifestFromBytes(data, 'image/jpeg'),
+        throwsA(isA<C2paManifestNotFoundException>()),
+      );
     });
 
     test('readManifestFromFile with options', () async {
@@ -112,8 +132,7 @@ void main() {
     test('readManifestFromBytes returns ManifestStoreInfo', () async {
       final data = Uint8List.fromList([0xFF, 0xD8, 0xFF, 0xE0]);
       final result = await c2pa.readManifestFromBytes(data, 'image/jpeg');
-      expect(result, isNotNull);
-      expect(result!.activeManifest, isNotNull);
+      expect(result.activeManifest, isNotNull);
     });
 
     test('extractResource returns resource data', () async {
@@ -404,7 +423,7 @@ void main() {
 
     test('builder setIntent works', () async {
       final builder = await c2pa.createBuilder('{}');
-      builder.setIntent(
+      await builder.setIntent(
         ManifestIntent.create,
         DigitalSourceType.digitalCapture,
       );
@@ -416,7 +435,7 @@ void main() {
 
     test('builder setNoEmbed works', () async {
       final builder = await c2pa.createBuilder('{}');
-      builder.setNoEmbed();
+      await builder.setNoEmbed();
 
       final mockBuilder = mockPlatform.builders[builder.handle] as MockBuilder;
       expect(mockBuilder.noEmbed, true);
@@ -424,7 +443,7 @@ void main() {
 
     test('builder setRemoteUrl works', () async {
       final builder = await c2pa.createBuilder('{}');
-      builder.setRemoteUrl('https://example.com/manifest');
+      await builder.setRemoteUrl('https://example.com/manifest');
 
       final mockBuilder = mockPlatform.builders[builder.handle] as MockBuilder;
       expect(mockBuilder.remoteUrl, 'https://example.com/manifest');
@@ -467,7 +486,7 @@ void main() {
     test('builder addAction works', () async {
       final builder = await c2pa.createBuilder('{}');
 
-      builder.addAction(
+      await builder.addAction(
         ActionConfig(
           action: 'c2pa.created',
           softwareAgent: 'TestApp/1.0',
@@ -504,14 +523,14 @@ void main() {
       final builder = await c2pa.createBuilder('{}');
       final handle = builder.handle;
 
-      builder.dispose();
+      await builder.dispose();
 
       expect(mockPlatform.builders.containsKey(handle), false);
     });
 
     test('disposed builder throws error', () async {
       final builder = await c2pa.createBuilder('{}');
-      builder.dispose();
+      await builder.dispose();
 
       expect(() => builder.setIntent(ManifestIntent.create), throwsStateError);
     });
@@ -878,7 +897,7 @@ void main() {
 
     test('dispose() prevents further operations', () async {
       final settings = await C2paSettings.create();
-      settings.dispose();
+      await settings.dispose();
 
       expect(() => settings.updateFromString('{}', 'json'), throwsStateError);
       expect(() => settings.setValue('key', 'value'), throwsStateError);
@@ -907,12 +926,12 @@ void main() {
 
     test('dispose() prevents further operations', () async {
       final context = await C2paContext.create();
-      context.dispose();
+      await context.dispose();
 
       expect(
-        () async => await c2pa.readManifestFromFileWithContext(
+        () async => await c2pa.readManifestFromFile(
           '/path/to/image.jpg',
-          context,
+          options: ReaderOptions(context: context),
         ),
         throwsStateError,
       );
@@ -920,7 +939,7 @@ void main() {
 
     test('fromSettings() on disposed settings throws StateError', () async {
       final settings = await C2paSettings.create();
-      settings.dispose();
+      await settings.dispose();
 
       expect(
         () async => await C2paContext.fromSettings(settings),
@@ -968,43 +987,22 @@ void main() {
     });
   });
 
-  group('Enhanced Reader API', () {
-    test(
-      'readManifestFromFileWithContext calls readFileWithContext with correct args',
-      () async {
-        final context = await C2paContext.create();
-        final result = await c2pa.readManifestFromFileWithContext(
-          '/path/to/image.jpg',
-          context,
-          options: const ReaderOptions(detailed: true),
-        );
+  group('Reader with context', () {
+    test('readManifestFromFile passes the context handle', () async {
+      final context = await C2paContext.create();
+      final result = await c2pa.readManifestFromFile(
+        '/path/to/image.jpg',
+        options: ReaderOptions(detailed: true, context: context),
+      );
 
-        expect(result, isNotNull);
-        expect(result!.activeManifest, isNotNull);
+      expect(result.activeManifest, isNotNull);
 
-        final call = mockPlatform.methodCalls.last;
-        expect(call.method, 'readFileWithContext');
-        expect(call.arguments!['path'], '/path/to/image.jpg');
-        expect(call.arguments!['contextHandle'], context.handle);
-        expect(call.arguments!['detailed'], true);
-      },
-    );
-
-    test(
-      'readManifestFromFileWithContext on disposed context throws StateError',
-      () async {
-        final context = await C2paContext.create();
-        context.dispose();
-
-        expect(
-          () async => await c2pa.readManifestFromFileWithContext(
-            '/path/to/image.jpg',
-            context,
-          ),
-          throwsStateError,
-        );
-      },
-    );
+      final call = mockPlatform.methodCalls.last;
+      expect(call.method, 'readFileDetailed');
+      expect(call.arguments!['path'], '/path/to/image.jpg');
+      expect(call.arguments!['contextHandle'], context.handle);
+      expect(call.arguments!['detailed'], true);
+    });
   });
 
   group('Enhanced Builder API', () {
@@ -1044,7 +1042,7 @@ void main() {
       'createBuilderWithSettings on disposed settings throws StateError',
       () async {
         final settings = await C2paSettings.create();
-        settings.dispose();
+        await settings.dispose();
 
         expect(
           () async => await c2pa.createBuilderWithSettings(
@@ -1089,10 +1087,22 @@ void main() {
       expect(call.method, 'createSelfSignedCertificateChain');
       expect(call.arguments!['keyAlias'], 'test-key');
       expect(call.arguments!['config'], isNotNull);
-      expect(call.arguments!['config']['commonName'], 'Test App');
-      expect(call.arguments!['config']['organization'], 'Test Org');
-      expect(call.arguments!['config']['country'], 'US');
-      expect(call.arguments!['config']['validityDays'], 365);
+      expect(
+        (call.arguments!['config'] as Map<dynamic, dynamic>)['commonName'],
+        'Test App',
+      );
+      expect(
+        (call.arguments!['config'] as Map<dynamic, dynamic>)['organization'],
+        'Test Org',
+      );
+      expect(
+        (call.arguments!['config'] as Map<dynamic, dynamic>)['country'],
+        'US',
+      );
+      expect(
+        (call.arguments!['config'] as Map<dynamic, dynamic>)['validityDays'],
+        365,
+      );
     });
   });
 }

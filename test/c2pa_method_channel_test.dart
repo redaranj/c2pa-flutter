@@ -10,6 +10,7 @@ files for the specific language governing permissions and limitations under
 each license.
 */
 
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/services.dart';
@@ -42,10 +43,12 @@ void main() {
   group('MethodChannelManifestBuilder', () {
     late List<MethodCall> methodCalls;
     late int nextHandle;
+    var failNextAddAction = false;
 
     setUp(() {
       methodCalls = [];
       nextHandle = 1;
+      failNextAddAction = false;
 
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, (MethodCall methodCall) async {
@@ -63,6 +66,13 @@ void main() {
               case 'builderSetRemoteUrl':
                 return null;
               case 'builderAddAction':
+                if (failNextAddAction) {
+                  failNextAddAction = false;
+                  throw PlatformException(
+                    code: 'C2PA_ERROR',
+                    message: 'invalid action',
+                  );
+                }
                 return null;
               case 'builderSign':
                 return {
@@ -81,9 +91,11 @@ void main() {
     test('setIntent is applied via native call on sign', () async {
       final builder = await platform.createBuilder('{}');
 
-      builder.setIntent(
-        ManifestIntent.create,
-        DigitalSourceType.digitalCapture,
+      unawaited(
+        builder.setIntent(
+          ManifestIntent.create,
+          DigitalSourceType.digitalCapture,
+        ),
       );
 
       await builder.sign(
@@ -100,22 +112,28 @@ void main() {
           .where((c) => c.method == 'builderSetIntent')
           .toList();
       expect(setIntentCalls.length, 1);
-      expect(setIntentCalls[0].arguments['intent'], 'create');
       expect(
-        setIntentCalls[0].arguments['digitalSourceType'],
+        (setIntentCalls[0].arguments as Map<dynamic, dynamic>)['intent'],
+        'create',
+      );
+      expect(
+        (setIntentCalls[0].arguments
+            as Map<dynamic, dynamic>)['digitalSourceType'],
         'digitalCapture',
       );
 
-      builder.dispose();
+      await builder.dispose();
     });
 
     test('addAction is applied via native call on sign', () async {
       final builder = await platform.createBuilder('{}');
 
-      builder.addAction(
-        const ActionConfig(
-          action: 'c2pa.created',
-          softwareAgent: 'TestApp/1.0',
+      unawaited(
+        builder.addAction(
+          const ActionConfig(
+            action: 'c2pa.created',
+            softwareAgent: 'TestApp/1.0',
+          ),
         ),
       );
 
@@ -134,19 +152,23 @@ void main() {
           .toList();
       expect(addActionCalls.length, 1);
 
-      final actionJson = jsonDecode(
-        addActionCalls[0].arguments['actionJson'] as String,
-      );
+      final actionJson =
+          jsonDecode(
+                (addActionCalls[0].arguments
+                        as Map<dynamic, dynamic>)['actionJson']
+                    as String,
+              )
+              as Map<String, dynamic>;
       expect(actionJson['action'], 'c2pa.created');
       expect(actionJson['softwareAgent'], 'TestApp/1.0');
 
-      builder.dispose();
+      await builder.dispose();
     });
 
     test('setNoEmbed is applied via native call on sign', () async {
       final builder = await platform.createBuilder('{}');
 
-      builder.setNoEmbed();
+      unawaited(builder.setNoEmbed());
 
       await builder.sign(
         sourceData: Uint8List.fromList([1, 2, 3]),
@@ -163,13 +185,13 @@ void main() {
           .toList();
       expect(setNoEmbedCalls.length, 1);
 
-      builder.dispose();
+      await builder.dispose();
     });
 
     test('setRemoteUrl is applied via native call on sign', () async {
       final builder = await platform.createBuilder('{}');
 
-      builder.setRemoteUrl('https://example.com/manifest');
+      unawaited(builder.setRemoteUrl('https://example.com/manifest'));
 
       await builder.sign(
         sourceData: Uint8List.fromList([1, 2, 3]),
@@ -186,19 +208,19 @@ void main() {
           .toList();
       expect(setRemoteUrlCalls.length, 1);
       expect(
-        setRemoteUrlCalls[0].arguments['url'],
+        (setRemoteUrlCalls[0].arguments as Map<dynamic, dynamic>)['url'],
         'https://example.com/manifest',
       );
 
-      builder.dispose();
+      await builder.dispose();
     });
 
     test('multiple operations are applied in order on sign', () async {
       final builder = await platform.createBuilder('{}');
 
-      builder.setIntent(ManifestIntent.create);
-      builder.setNoEmbed();
-      builder.addAction(const ActionConfig(action: 'c2pa.created'));
+      unawaited(builder.setIntent(ManifestIntent.create));
+      unawaited(builder.setNoEmbed());
+      unawaited(builder.addAction(const ActionConfig(action: 'c2pa.created')));
 
       await builder.sign(
         sourceData: Uint8List.fromList([1, 2, 3]),
@@ -210,18 +232,74 @@ void main() {
         ),
       );
 
-      // Verify operations were applied
-      expect(methodCalls.any((c) => c.method == 'builderSetIntent'), true);
-      expect(methodCalls.any((c) => c.method == 'builderSetNoEmbed'), true);
-      expect(methodCalls.any((c) => c.method == 'builderAddAction'), true);
+      expect(
+        methodCalls
+            .map((c) => c.method)
+            .where((m) => m.startsWith('builder'))
+            .toList(),
+        [
+          'builderSetIntent',
+          'builderSetNoEmbed',
+          'builderAddAction',
+          'builderSign',
+        ],
+      );
 
-      builder.dispose();
+      await builder.dispose();
+    });
+
+    test('un-awaited calls reach native in call order', () async {
+      final builder = await platform.createBuilder('{}');
+
+      // Neither call is awaited before sign is issued.
+      unawaited(
+        builder.addIngredient(
+          data: Uint8List.fromList([1]),
+          mimeType: 'image/jpeg',
+        ),
+      );
+      unawaited(builder.setIntent(ManifestIntent.edit));
+      await builder.sign(
+        sourceData: Uint8List.fromList([1, 2, 3]),
+        mimeType: 'image/jpeg',
+        signer: const PemSigner(
+          algorithm: SigningAlgorithm.es256,
+          certificatePem: 'test-cert',
+          privateKeyPem: 'test-key',
+        ),
+      );
+      await builder.dispose();
+
+      expect(
+        methodCalls
+            .map((c) => c.method)
+            .where((m) => m.startsWith('builder'))
+            .toList(),
+        [
+          'builderAddIngredient',
+          'builderSetIntent',
+          'builderSign',
+          'builderDispose',
+        ],
+      );
+    });
+
+    test('a failed call does not stop later calls', () async {
+      final builder = await platform.createBuilder('{}');
+      failNextAddAction = true;
+
+      final failed = builder.addAction(const ActionConfig(action: 'bad'));
+      final archive = builder.toArchive();
+
+      await expectLater(failed, throwsA(isA<C2paSdkException>()));
+      expect((await archive).data, Uint8List.fromList([7, 8, 9]));
+      await builder.dispose();
     });
 
     test('toArchive applies pending operations', () async {
       final builder = await platform.createBuilder('{}');
 
-      builder.setIntent(ManifestIntent.edit);
+      unawaited(builder.setIntent(ManifestIntent.edit));
 
       await builder.toArchive();
 
@@ -229,14 +307,17 @@ void main() {
           .where((c) => c.method == 'builderSetIntent')
           .toList();
       expect(setIntentCalls.length, 1);
-      expect(setIntentCalls[0].arguments['intent'], 'edit');
+      expect(
+        (setIntentCalls[0].arguments as Map<dynamic, dynamic>)['intent'],
+        'edit',
+      );
 
-      builder.dispose();
+      await builder.dispose();
     });
 
     test('disposed builder throws StateError', () async {
       final builder = await platform.createBuilder('{}');
-      builder.dispose();
+      await builder.dispose();
 
       expect(() => builder.setIntent(ManifestIntent.create), throwsStateError);
       expect(() => builder.setNoEmbed(), throwsStateError);
@@ -251,20 +332,23 @@ void main() {
       final builder = await platform.createBuilder('{}');
       final handle = builder.handle;
 
-      builder.dispose();
+      await builder.dispose();
 
       final disposeCalls = methodCalls
           .where((c) => c.method == 'builderDispose')
           .toList();
       expect(disposeCalls.length, 1);
-      expect(disposeCalls[0].arguments['handle'], handle);
+      expect(
+        (disposeCalls[0].arguments as Map<dynamic, dynamic>)['handle'],
+        handle,
+      );
     });
 
     test('double dispose only calls native once', () async {
       final builder = await platform.createBuilder('{}');
 
-      builder.dispose();
-      builder.dispose(); // Should be no-op
+      await builder.dispose();
+      await builder.dispose(); // Should be no-op
 
       final disposeCalls = methodCalls
           .where((c) => c.method == 'builderDispose')
@@ -275,7 +359,7 @@ void main() {
     test('pending operations are cleared after sign', () async {
       final builder = await platform.createBuilder('{}');
 
-      builder.setIntent(ManifestIntent.create);
+      unawaited(builder.setIntent(ManifestIntent.create));
 
       // First sign
       await builder.sign(
@@ -308,7 +392,7 @@ void main() {
           .toList();
       expect(setIntentCalls.length, 0);
 
-      builder.dispose();
+      await builder.dispose();
     });
   });
 }

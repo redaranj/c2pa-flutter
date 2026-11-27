@@ -94,11 +94,13 @@ void main() {
   group('builder call ordering', () {
     test('queued configuration is sent before the next async call', () async {
       final builder = await platform.createBuilder('{}');
-      builder.setIntent(
+      await builder.setIntent(
         ManifestIntent.create,
         DigitalSourceType.digitalCapture,
       );
-      builder.addAction(const ActionConfig(action: 'c2pa.color_adjustments'));
+      await builder.addAction(
+        const ActionConfig(action: 'c2pa.color_adjustments'),
+      );
       await builder.placeholder('image/jpeg');
 
       expect(calls.map((c) => c.method).toList(), [
