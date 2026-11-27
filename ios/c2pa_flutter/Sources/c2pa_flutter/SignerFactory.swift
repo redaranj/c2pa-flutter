@@ -19,7 +19,9 @@ import Security
 /// for the answer. Callback signers and HTTP resolvers run synchronously on
 /// the thread performing a C2PA operation, so they use this to reach Dart.
 final class DartBridge: @unchecked Sendable {
-    weak var channel: FlutterMethodChannel?
+    /// Held strongly: nothing else owns the channel created in `register`,
+    /// so a weak reference is released as soon as registration returns.
+    var channel: FlutterMethodChannel?
 
     private final class Box: @unchecked Sendable {
         var value: Any?
