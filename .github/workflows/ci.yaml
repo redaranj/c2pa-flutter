@@ -293,25 +293,20 @@ jobs:
           xcrun simctl bootstatus "$DEVICE_ID" -b
           echo "DEVICE_ID=$DEVICE_ID" >> $GITHUB_ENV
 
-      # Each file runs on its own with verbose output kept in a log, so a hang
-      # (seen intermittently on hosted runners after the Xcode build) shows
-      # where it stopped instead of a silent step timeout.
+      # Each file runs on its own with a verbose log. The wrapper retries an
+      # attempt that stalls in flutter's VM service discovery, which happens
+      # intermittently on hosted simulators.
       - name: Run integration tests (plugin)
-        timeout-minutes: 25
+        timeout-minutes: 50
         run: |
           cd example
-          set -o pipefail
-          flutter test integration_test/plugin_integration_test.dart -d "$DEVICE_ID" --ignore-timeouts -v > ../ios-plugin-test.log 2>&1 \
-            || { tail -150 ../ios-plugin-test.log; exit 1; }
-          grep -E '[0-9]+ tests? passed|All tests passed' ../ios-plugin-test.log | tail -3
+          ../.github/scripts/ios-integration-test.sh integration_test/plugin_integration_test.dart ../ios-plugin-test.log
 
       - name: Run integration tests (SDK sync)
-        timeout-minutes: 25
+        timeout-minutes: 50
         run: |
           cd example
-          flutter test integration_test/sdk_sync_test.dart -d "$DEVICE_ID" --ignore-timeouts -v > ../ios-sdk-test.log 2>&1 \
-            || { tail -150 ../ios-sdk-test.log; exit 1; }
-          grep -E '[0-9]+ tests? passed|All tests passed' ../ios-sdk-test.log | tail -3
+          ../.github/scripts/ios-integration-test.sh integration_test/sdk_sync_test.dart ../ios-sdk-test.log
 
       - name: Show the tail of the test logs
         if: always()
