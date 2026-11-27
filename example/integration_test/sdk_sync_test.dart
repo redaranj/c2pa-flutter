@@ -59,7 +59,7 @@ void main() {
 
   Future<ManifestBuilder> contextBuilder(C2paContext context) async {
     final builder = await c2pa.createBuilderFromContext(context, manifest());
-    builder.setIntent(ManifestIntent.create, DigitalSourceType.digitalCapture);
+    await builder.setIntent(ManifestIntent.create, DigitalSourceType.digitalCapture);
     return builder;
   }
 
@@ -94,10 +94,10 @@ void main() {
           result.signedData,
           'image/jpeg',
         );
-        expect(store?.activeManifest, isNotNull);
+        expect(store.activeManifest, isNotNull);
       } finally {
-        builder.dispose();
-        context.dispose();
+        await builder.dispose();
+        await context.dispose();
       }
     });
 
@@ -115,9 +115,9 @@ void main() {
         );
         expect(result.signedData.length, greaterThan(jpeg.length));
       } finally {
-        builder.dispose();
-        context.dispose();
-        settings.dispose();
+        await builder.dispose();
+        await context.dispose();
+        await settings.dispose();
       }
     });
 
@@ -150,7 +150,7 @@ void main() {
       tester,
     ) async {
       final builder = await c2pa.createBuilder(manifest());
-      builder.setIntent(
+      await builder.setIntent(
         ManifestIntent.create,
         DigitalSourceType.digitalCapture,
       );
@@ -170,7 +170,7 @@ void main() {
           ),
         );
       } finally {
-        builder.dispose();
+        await builder.dispose();
       }
     });
 
@@ -183,8 +183,8 @@ void main() {
           throwsA(isA<PlatformException>()),
         );
       } finally {
-        builder.dispose();
-        context.dispose();
+        await builder.dispose();
+        await context.dispose();
       }
     });
 
@@ -209,15 +209,15 @@ void main() {
           final builder = await contextBuilder(context);
           try {
             await builder.sign(sourceData: jpeg, mimeType: 'image/jpeg');
-          } on PlatformException {
+          } on C2paException {
             // Expected when the dummy signature is verified.
           } finally {
-            builder.dispose();
+            await builder.dispose();
           }
         }
         expect(calls, 2);
       } finally {
-        context.dispose();
+        await context.dispose();
       }
     });
   });
@@ -243,15 +243,15 @@ void main() {
           ),
         );
       } finally {
-        builder.dispose();
-        context.dispose();
+        await builder.dispose();
+        await context.dispose();
       }
     });
 
     testWidgets('cancel on an idle context is harmless', (tester) async {
       final context = await C2paContext.create();
       await context.cancel();
-      context.dispose();
+      await context.dispose();
     });
   });
 
@@ -265,8 +265,8 @@ void main() {
         expect(await builder.hashType('image/jpeg'), C2paHashType.dataHash);
         expect(await builder.needsPlaceholder('image/jpeg'), isTrue);
       } finally {
-        builder.dispose();
-        context.dispose();
+        await builder.dispose();
+        await context.dispose();
       }
     });
 
@@ -299,10 +299,10 @@ void main() {
           'image/jpeg',
           options: const ReaderOptions(detailed: true),
         );
-        expect(store?.activeManifest, isNotNull);
+        expect(store.activeManifest, isNotNull);
       } finally {
-        builder.dispose();
-        context.dispose();
+        await builder.dispose();
+        await context.dispose();
       }
     });
 
@@ -310,11 +310,11 @@ void main() {
       tester,
     ) async {
       final builder = await c2pa.createBuilder(manifest());
-      builder.setIntent(
+      await builder.setIntent(
         ManifestIntent.create,
         DigitalSourceType.digitalCapture,
       );
-      builder.setNoEmbed();
+      await builder.setNoEmbed();
       try {
         final result = await builder.sign(
           sourceData: jpeg,
@@ -332,7 +332,7 @@ void main() {
         expect(composed[0], 0xFF);
         expect(composed[1], 0xEB);
       } finally {
-        builder.dispose();
+        await builder.dispose();
       }
     });
   });
@@ -342,11 +342,11 @@ void main() {
       tester,
     ) async {
       final builder = await c2pa.createBuilder(manifest());
-      builder.setIntent(
+      await builder.setIntent(
         ManifestIntent.create,
         DigitalSourceType.digitalCapture,
       );
-      builder.setNoEmbed();
+      await builder.setNoEmbed();
       try {
         final result = await builder.sign(
           sourceData: jpeg,
@@ -360,7 +360,7 @@ void main() {
         );
         expect(store.activeManifest, isNotNull);
       } finally {
-        builder.dispose();
+        await builder.dispose();
       }
     });
 
@@ -369,18 +369,18 @@ void main() {
     ) async {
       const remoteUrl = 'https://example.invalid/manifests/test.c2pa';
       final builder = await c2pa.createBuilder(manifest());
-      builder.setIntent(
+      await builder.setIntent(
         ManifestIntent.create,
         DigitalSourceType.digitalCapture,
       );
-      builder.setNoEmbed();
-      builder.setRemoteUrl(remoteUrl);
+      await builder.setNoEmbed();
+      await builder.setRemoteUrl(remoteUrl);
       final signed = await builder.sign(
         sourceData: jpeg,
         mimeType: 'image/jpeg',
         signer: pemSigner(),
       );
-      builder.dispose();
+      await builder.dispose();
 
       final requests = <C2paHttpRequest>[];
       final settings = await C2paSettings.create();
@@ -402,10 +402,10 @@ void main() {
           options: ReaderOptions(context: context),
         );
         expect(requests.map((r) => r.url), contains(remoteUrl));
-        expect(store?.activeManifest, isNotNull);
+        expect(store.activeManifest, isNotNull);
       } finally {
-        context.dispose();
-        settings.dispose();
+        await context.dispose();
+        await settings.dispose();
       }
     });
   });
@@ -448,10 +448,10 @@ void main() {
           final json = await c2pa.readBytes(result.signedData, 'image/jpeg');
           expect(json, contains('archived.jpg'));
         } finally {
-          exporter.dispose();
-          importer.dispose();
-          context.dispose();
-          settings.dispose();
+          await exporter.dispose();
+          await importer.dispose();
+          await context.dispose();
+          await settings.dispose();
         }
       },
     );
@@ -460,7 +460,7 @@ void main() {
   group('crJSON', () {
     testWidgets('reads a signed asset as crJSON', (tester) async {
       final builder = await c2pa.createBuilder(manifest());
-      builder.setIntent(
+      await builder.setIntent(
         ManifestIntent.create,
         DigitalSourceType.digitalCapture,
       );
@@ -476,7 +476,7 @@ void main() {
         );
         expect(() => jsonDecode(crJson), returnsNormally);
       } finally {
-        builder.dispose();
+        await builder.dispose();
       }
     });
   });
@@ -484,7 +484,7 @@ void main() {
   group('CAWG identity signer', () {
     testWidgets('signing emits a cawg.identity assertion', (tester) async {
       final builder = await c2pa.createBuilder(manifest());
-      builder.setIntent(
+      await builder.setIntent(
         ManifestIntent.create,
         DigitalSourceType.digitalCapture,
       );
@@ -501,7 +501,7 @@ void main() {
         final json = await c2pa.readBytes(result.signedData, 'image/jpeg');
         expect(json, contains('cawg.identity'));
       } finally {
-        builder.dispose();
+        await builder.dispose();
       }
     });
   });
@@ -518,7 +518,7 @@ void main() {
       await dest.writeAsBytes(Uint8List(leftoverSize));
 
       final builder = await c2pa.createBuilder(manifest());
-      builder.setIntent(
+      await builder.setIntent(
         ManifestIntent.create,
         DigitalSourceType.digitalCapture,
       );
@@ -531,9 +531,9 @@ void main() {
         expect(result.manifestSize, greaterThan(0));
         expect(await dest.length(), lessThan(leftoverSize));
         final store = await c2pa.readManifestFromFile(dest.path);
-        expect(store?.activeManifest, isNotNull);
+        expect(store.activeManifest, isNotNull);
       } finally {
-        builder.dispose();
+        await builder.dispose();
       }
     });
 
@@ -549,7 +549,7 @@ void main() {
         );
         expect(File(missing).existsSync(), isFalse);
       } finally {
-        builder.dispose();
+        await builder.dispose();
       }
     });
   });
@@ -559,7 +559,7 @@ void main() {
       tester,
     ) async {
       final builder = await c2pa.createBuilder(manifest());
-      builder.setIntent(
+      await builder.setIntent(
         ManifestIntent.create,
         DigitalSourceType.computationalCapture,
       );
@@ -572,7 +572,7 @@ void main() {
         final json = await c2pa.readBytes(result.signedData, 'image/jpeg');
         expect(json, contains('computationalCapture'));
       } finally {
-        builder.dispose();
+        await builder.dispose();
       }
     });
   });

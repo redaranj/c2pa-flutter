@@ -212,7 +212,7 @@ jobs:
           api-level: 34
           arch: x86_64
           profile: Nexus 6
-          script: cd example && flutter test integration_test/plugin_integration_test.dart integration_test/sdk_sync_test.dart
+          script: cd example && flutter test integration_test/
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
 
@@ -295,23 +295,30 @@ jobs:
 
       # Each file runs on its own with a verbose log. The wrapper retries an
       # attempt that stalls in flutter's VM service discovery, which happens
-      # intermittently on hosted simulators.
-      - name: Run integration tests (plugin)
-        timeout-minutes: 50
+      # intermittently on hosted simulators. Every file runs even when an
+      # earlier one fails; the step fails at the end if any did.
+      - name: Run integration tests
+        timeout-minutes: 180
         run: |
           cd example
-          ../.github/scripts/ios-integration-test.sh integration_test/plugin_integration_test.dart ../ios-plugin-test.log
-
-      - name: Run integration tests (SDK sync)
-        timeout-minutes: 50
-        run: |
-          cd example
-          ../.github/scripts/ios-integration-test.sh integration_test/sdk_sync_test.dart ../ios-sdk-test.log
+          failed=()
+          for test in integration_test/*_test.dart; do
+            name=$(basename "$test" .dart)
+            echo "::group::$name"
+            if ! ../.github/scripts/ios-integration-test.sh "$test" "../ios-$name.log"; then
+              failed+=("$name")
+            fi
+            echo "::endgroup::"
+          done
+          if [ ${#failed[@]} -gt 0 ]; then
+            echo "Failed: ${failed[*]}"
+            exit 1
+          fi
 
       - name: Show the tail of the test logs
         if: always()
         run: |
-          for f in ios-plugin-test.log ios-sdk-test.log; do
+          for f in ios-*.log; do
             [ -f "$f" ] && { echo "=== $f"; tail -80 "$f"; }
           done
           exit 0
