@@ -27,7 +27,11 @@ final class KeyManagement {
 
     func createKey(_ args: Args) throws {
         let keyAlias: String = try args.req("keyAlias")
+        let algorithm: String = try args.req("algorithm")
         if args.opt("useHardware") ?? false {
+            guard algorithm == "es256" else {
+                throw PluginError.invalidArgument("Hardware keys are P-256: use es256, not \(algorithm)")
+            }
             #if targetEnvironment(simulator)
             throw PluginError(code: "NOT_AVAILABLE", message: "Secure Enclave not available in Simulator")
             #else
@@ -35,17 +39,27 @@ final class KeyManagement {
             _ = try Signer.createSecureEnclaveKey(config: config)
             #endif
         } else {
-            try createKeychainKey(keyAlias)
+            try createKeychainKey(keyAlias, bits: try keySize(for: algorithm))
         }
     }
 
-    private func createKeychainKey(_ keyAlias: String) throws {
+    private func keySize(for algorithm: String) throws -> Int {
+        switch algorithm {
+        case "es256": return 256
+        case "es384": return 384
+        case "es512": return 521
+        default:
+            throw PluginError.invalidArgument("createKey supports es256, es384 and es512, not \(algorithm)")
+        }
+    }
+
+    private func createKeychainKey(_ keyAlias: String, bits: Int = 256) throws {
         let attributes: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
-            kSecAttrKeySizeInBits as String: 256,
+            kSecAttrKeySizeInBits as String: bits,
             kSecPrivateKeyAttrs as String: [
                 kSecAttrIsPermanent as String: true,
-                kSecAttrApplicationTag as String: Data(keyAlias.utf8),
+                kSecAttrApplicationTag as String: keyAlias,
             ],
         ]
         var error: Unmanaged<CFError>?
@@ -60,7 +74,7 @@ final class KeyManagement {
         if Signer.deleteSecureEnclaveKey(keyTag: keyAlias) { return true }
         let query: [String: Any] = [
             kSecClass as String: kSecClassKey,
-            kSecAttrApplicationTag as String: Data(keyAlias.utf8),
+            kSecAttrApplicationTag as String: keyAlias,
         ]
         return SecItemDelete(query as CFDictionary) == errSecSuccess
     }
@@ -69,7 +83,7 @@ final class KeyManagement {
         let keyAlias: String = try args.req("keyAlias")
         let query: [String: Any] = [
             kSecClass as String: kSecClassKey,
-            kSecAttrApplicationTag as String: Data(keyAlias.utf8),
+            kSecAttrApplicationTag as String: keyAlias,
             kSecReturnRef as String: false,
         ]
         return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
@@ -102,14 +116,14 @@ final class KeyManagement {
 
         let deleteQuery: [String: Any] = [
             kSecClass as String: kSecClassKey,
-            kSecAttrApplicationTag as String: Data(keyAlias.utf8),
+            kSecAttrApplicationTag as String: keyAlias,
         ]
         _ = SecItemDelete(deleteQuery as CFDictionary)
 
         let addQuery: [String: Any] = [
             kSecClass as String: kSecClassKey,
             kSecValueRef as String: key,
-            kSecAttrApplicationTag as String: Data(keyAlias.utf8),
+            kSecAttrApplicationTag as String: keyAlias,
         ]
         let status = SecItemAdd(addQuery as CFDictionary, nil)
         guard status == errSecSuccess else {

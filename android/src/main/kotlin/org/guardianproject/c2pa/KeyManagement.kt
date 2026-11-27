@@ -12,6 +12,8 @@ each license.
 
 package org.guardianproject.c2pa
 
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
 import io.flutter.plugin.common.MethodCall
 import org.contentauth.c2pa.CertificateManager
 import org.contentauth.c2pa.KeyStoreSigner
@@ -20,10 +22,12 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.KeyFactory
+import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.PrivateKey
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
+import java.security.spec.ECGenParameterSpec
 import java.security.spec.PKCS8EncodedKeySpec
 import java.util.Base64
 
@@ -39,12 +43,42 @@ class KeyManagement(private val appContext: () -> android.content.Context?) {
 
     fun createKey(call: MethodCall) {
         val keyAlias = call.req<String>("keyAlias")
-        call.req<String>("algorithm")
+        val algorithm = call.req<String>("algorithm")
         val useHardware = call.opt<Boolean>("useHardware") ?: false
         if (useHardware) {
+            if (algorithm != "es256") {
+                throw invalidArgument("Hardware keys are P-256: use es256, not $algorithm")
+            }
             StrongBoxSigner.createKey(StrongBoxSigner.Config(keyTag = keyAlias))
         } else {
-            CertificateManager.generateHardwareKey(keyAlias, requireStrongBox = false)
+            createSoftwareKey(keyAlias, curveFor(algorithm))
+        }
+    }
+
+    private fun curveFor(algorithm: String): String = when (algorithm) {
+        "es256" -> "secp256r1"
+        "es384" -> "secp384r1"
+        "es512" -> "secp521r1"
+        else -> throw invalidArgument("createKey supports es256, es384 and es512, not $algorithm")
+    }
+
+    /**
+     * An AndroidKeyStore EC key on [curve]. Every SHA-2 digest is allowed, so
+     * the key serves the KeyStoreSigner for its algorithm and CSR creation
+     * (which signs with SHA-256) alike.
+     */
+    private fun createSoftwareKey(keyAlias: String, curve: String) {
+        val spec = KeyGenParameterSpec.Builder(
+            keyAlias,
+            KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY,
+        )
+            .setAlgorithmParameterSpec(ECGenParameterSpec(curve))
+            .setDigests(KeyProperties.DIGEST_SHA256, KeyProperties.DIGEST_SHA384, KeyProperties.DIGEST_SHA512)
+            .setUserAuthenticationRequired(false)
+            .build()
+        KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, "AndroidKeyStore").run {
+            initialize(spec)
+            generateKeyPair()
         }
     }
 

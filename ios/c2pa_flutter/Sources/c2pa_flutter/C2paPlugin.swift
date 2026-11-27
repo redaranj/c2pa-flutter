@@ -348,25 +348,41 @@ public class C2paPlugin: NSObject, FlutterPlugin {
         return try Reader(format: format, stream: stream)
     }
 
+    /// Builders created without a context get the settings c2pa-android's
+    /// `Builder.fromJson` applies, so both platforms record the same
+    /// assertions as created rather than gathered.
     private func newBuilder(_ contextHandle: Int?, _ manifestJson: String) throws -> Builder {
         if let context = try contextFor(contextHandle) {
             return try Builder(context: context, manifestJSON: manifestJson)
         }
-        return try Builder(manifestJSON: manifestJson)
+        let context = try C2PAContext(settings: try defaultLabelSettings())
+        return try Builder(context: context, manifestJSON: manifestJson)
+    }
+
+    /// The assertion labels c2pa-android's `Builder.DEFAULT_CREATED_ASSERTION_LABELS` lists.
+    private static let defaultCreatedAssertionLabels = [
+        "c2pa.actions",
+        "c2pa.actions.v2",
+        "c2pa.thumbnail.claim",
+        "c2pa.thumbnail.ingredient",
+        "c2pa.ingredient",
+        "c2pa.ingredient.v3",
+    ]
+
+    /// Fresh settings carrying only the default created-assertion labels.
+    private func defaultLabelSettings() throws -> C2PASettings {
+        let settings: [String: Any] = [
+            "version": 1,
+            "builder": ["created_assertion_labels": Self.defaultCreatedAssertionLabels],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: settings)
+        return try C2PASettings(json: String(decoding: data, as: UTF8.self))
     }
 
     private func load(into settings: C2PASettings, _ text: String, format: String) throws {
         switch format.lowercased() {
         case "json": try settings.load(json: text)
         case "toml": try settings.load(toml: text)
-        default: throw PluginError.invalidArgument("format must be 'json' or 'toml'")
-        }
-    }
-
-    private func newSettings(_ text: String, format: String) throws -> C2PASettings {
-        switch format.lowercased() {
-        case "json": return try C2PASettings(json: text)
-        case "toml": return try C2PASettings(toml: text)
         default: throw PluginError.invalidArgument("format must be 'json' or 'toml'")
         }
     }
@@ -522,7 +538,8 @@ public class C2paPlugin: NSObject, FlutterPlugin {
     /// A builder whose context carries the signer described by a SettingsSigner map.
     private func settingsSignerBuilder(_ signerMap: [String: Any], manifestJson: String) throws -> Builder {
         let settingsArgs = Args(map: signerMap)
-        let settings = try newSettings(try settingsArgs.req("settings"), format: settingsArgs.opt("format") ?? "json")
+        let settings = try defaultLabelSettings()
+        try load(into: settings, try settingsArgs.req("settings"), format: settingsArgs.opt("format") ?? "json")
         return try Builder(context: try C2PAContext(settings: settings), manifestJSON: manifestJson)
     }
 
@@ -603,11 +620,9 @@ public class C2paPlugin: NSObject, FlutterPlugin {
     private func handleLoadSettings(_ args: Args) throws {
         let text: String = try args.req("settings")
         let format: String = try args.req("format")
-        if let defaults = defaultSettings {
-            try load(into: defaults, text, format: format)
-        } else {
-            defaultSettings = try newSettings(text, format: format)
-        }
+        let defaults = try defaultSettings ?? defaultLabelSettings()
+        try load(into: defaults, text, format: format)
+        defaultSettings = defaults
     }
 
     private func handleCreateContext(_ args: Args) throws -> Int {
