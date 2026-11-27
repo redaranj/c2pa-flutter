@@ -25,12 +25,10 @@ final class KeyManagement {
         #endif
     }
 
-    func createKey(_ args: Args) throws {
-        let keyAlias: String = try args.req("keyAlias")
-        let algorithm: String = try args.req("algorithm")
-        if args.opt("useHardware") ?? false {
-            guard algorithm == "es256" else {
-                throw PluginError.invalidArgument("Hardware keys are P-256: use es256, not \(algorithm)")
+    func createKey(_ keyAlias: String, algorithm: SigningAlgorithmMessage, useHardware: Bool) throws {
+        if useHardware {
+            guard algorithm == .es256 else {
+                throw PluginError.invalidArgument("Hardware keys are P-256: use es256, not \(algorithm.dartName)")
             }
             #if targetEnvironment(simulator)
             throw PluginError(code: "NOT_AVAILABLE", message: "Secure Enclave not available in Simulator")
@@ -43,13 +41,13 @@ final class KeyManagement {
         }
     }
 
-    private func keySize(for algorithm: String) throws -> Int {
+    private func keySize(for algorithm: SigningAlgorithmMessage) throws -> Int {
         switch algorithm {
-        case "es256": return 256
-        case "es384": return 384
-        case "es512": return 521
+        case .es256: return 256
+        case .es384: return 384
+        case .es512: return 521
         default:
-            throw PluginError.invalidArgument("createKey supports es256, es384 and es512, not \(algorithm)")
+            throw PluginError.invalidArgument("createKey supports es256, es384 and es512, not \(algorithm.dartName)")
         }
     }
 
@@ -69,14 +67,10 @@ final class KeyManagement {
         }
     }
 
-    func deleteKey(_ args: Args) throws -> Bool {
-        try deleteKey(try args.req("keyAlias") as String)
-    }
-
     /// Deletes every key tagged [keyAlias], in the keychain or the Secure
     /// Enclave. c2pa-swift's `deleteSecureEnclaveKey` reports success when
     /// nothing matched, so it cannot tell whether a keychain key remains.
-    private func deleteKey(_ keyAlias: String) -> Bool {
+    func deleteKey(_ keyAlias: String) -> Bool {
         let query: [String: Any] = [
             kSecClass as String: kSecClassKey,
             kSecAttrApplicationTag as String: keyAlias,
@@ -84,8 +78,7 @@ final class KeyManagement {
         return SecItemDelete(query as CFDictionary) == errSecSuccess
     }
 
-    func keyExists(_ args: Args) throws -> Bool {
-        let keyAlias: String = try args.req("keyAlias")
+    func keyExists(_ keyAlias: String) -> Bool {
         let query: [String: Any] = [
             kSecClass as String: kSecClassKey,
             kSecAttrApplicationTag as String: keyAlias,
@@ -97,8 +90,7 @@ final class KeyManagement {
     /// Exports the public key as a PEM SubjectPublicKeyInfo, the form Android
     /// returns. c2pa-swift's `Signer.exportPublicKeyPEM` returns the bare
     /// X9.63 point under the same PEM label, so the point is wrapped here.
-    func exportPublicKey(_ args: Args) throws -> String {
-        let keyAlias: String = try args.req("keyAlias")
+    func exportPublicKey(_ keyAlias: String) throws -> String {
         let query: [String: Any] = [
             kSecClass as String: kSecClassKey,
             kSecAttrApplicationTag as String: keyAlias,
@@ -138,12 +130,8 @@ final class KeyManagement {
     /// [keyAlias]. The certificate chain is not stored: keychain signers take
     /// it as a separate argument. RSA keys are not supported by the keychain
     /// signer path, so they are rejected.
-    func importKey(_ args: Args) throws {
-        let keyAlias: String = try args.req("keyAlias")
-        let pem: String = try args.req("privateKeyPem")
-        let _: String = try args.req("certificateChainPem")
-
-        let (x963, bits) = try ecPrivateKeyX963(pem)
+    func importKey(_ keyAlias: String, privateKeyPem: String) throws {
+        let (x963, bits) = try ecPrivateKeyX963(privateKeyPem)
         let attributes: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
             kSecAttrKeyClass as String: kSecAttrKeyClassPrivate,
@@ -187,16 +175,16 @@ final class KeyManagement {
         )
     }
 
-    func createCSR(_ args: Args) throws -> String {
-        let config = CertificateManager.CertificateConfig(
-            commonName: try args.req("commonName"),
-            organization: args.opt("organization") ?? "",
-            organizationalUnit: args.opt("organizationalUnit") ?? "",
-            country: args.opt("country") ?? "",
-            state: args.opt("state") ?? "",
-            locality: args.opt("locality") ?? ""
+    func createCSR(_ keyAlias: String, config: CertificateConfigMessage) throws -> String {
+        let certificateConfig = CertificateManager.CertificateConfig(
+            commonName: config.commonName,
+            organization: config.organization ?? "",
+            organizationalUnit: config.organizationalUnit ?? "",
+            country: config.country ?? "",
+            state: config.state ?? "",
+            locality: config.locality ?? ""
         )
-        return try CertificateManager.createCSR(keyTag: try args.req("keyAlias"), config: config)
+        return try CertificateManager.createCSR(keyTag: keyAlias, config: certificateConfig)
     }
 
     /// Creates a fresh key (Secure Enclave on device, keychain in the
@@ -204,12 +192,15 @@ final class KeyManagement {
     /// unavailable), creates a CSR for it and submits it to
     /// `<signingServerUrl>/api/v1/certificates/sign`, the same protocol the
     /// Android implementation uses.
-    func enrollHardwareKey(_ args: Args) throws -> [String: Any] {
-        let keyAlias: String = try args.req("keyAlias")
-        let serverURL: String = try args.req("signingServerUrl")
-        let bearerToken: String? = args.opt("bearerToken")
-        let commonName: String = args.opt("commonName") ?? "C2PA Hardware Key"
-        let organization: String = args.opt("organization") ?? "C2PA App"
+    func enrollHardwareKey(
+        _ keyAlias: String,
+        signingServerURL serverURL: String,
+        bearerToken: String?,
+        commonName commonNameOrNil: String?,
+        organization organizationOrNil: String?
+    ) throws -> HardwareKeyEnrollmentMessage {
+        let commonName = commonNameOrNil ?? "C2PA Hardware Key"
+        let organization = organizationOrNil ?? "C2PA App"
 
         _ = deleteKey(keyAlias)
         if isHardwareSigningAvailable() {
@@ -252,7 +243,7 @@ final class KeyManagement {
               let chain = json["certificate_chain"] as? String else {
             throw PluginError(code: "ENROLLMENT_ERROR", message: "Enrollment response has no certificate_chain")
         }
-        return ["certificateChain": chain, "keyAlias": keyAlias]
+        return HardwareKeyEnrollmentMessage(keyAlias: keyAlias, certificateChainPem: chain)
     }
 
     private func performBlocking(_ request: URLRequest) throws -> (Data, URLResponse?) {
@@ -274,18 +265,16 @@ final class KeyManagement {
         return (box.data, box.response)
     }
 
-    func createSelfSignedCertificateChain(_ args: Args) throws -> String {
-        let keyAlias: String = try args.req("keyAlias")
-        let configMap: [String: Any] = args.opt("config") ?? [:]
+    func createSelfSignedCertificateChain(_ keyAlias: String, config message: CertificateConfigMessage?) throws -> String {
         let config = CertificateManager.CertificateConfig(
-            commonName: configMap["commonName"] as? String ?? "C2PA Signer",
-            organization: configMap["organization"] as? String ?? "Unknown",
-            organizationalUnit: configMap["organizationalUnit"] as? String ?? "",
-            country: configMap["country"] as? String ?? "US",
-            state: configMap["state"] as? String ?? "",
-            locality: configMap["locality"] as? String ?? "",
-            emailAddress: configMap["emailAddress"] as? String,
-            validityDays: configMap["validityDays"] as? Int ?? 365
+            commonName: message?.commonName ?? "C2PA Signer",
+            organization: message?.organization ?? "Unknown",
+            organizationalUnit: message?.organizationalUnit ?? "",
+            country: message?.country ?? "US",
+            state: message?.state ?? "",
+            locality: message?.locality ?? "",
+            emailAddress: message?.emailAddress,
+            validityDays: message?.validityDays.map { Int($0) } ?? 365
         )
 
         let query: [String: Any] = [

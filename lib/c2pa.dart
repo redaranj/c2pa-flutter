@@ -2067,12 +2067,14 @@ class C2pa {
   }) {
     return C2paPlatform.instance.createCSR(
       keyAlias: keyAlias,
-      commonName: commonName,
-      organization: organization,
-      organizationalUnit: organizationalUnit,
-      country: country,
-      state: state,
-      locality: locality,
+      config: CertificateConfig(
+        commonName: commonName,
+        organization: organization,
+        organizationalUnit: organizationalUnit,
+        country: country,
+        state: state,
+        locality: locality,
+      ),
     );
   }
 
@@ -2095,18 +2097,14 @@ class C2pa {
     String? commonName,
     String? organization,
     bool useStrongBox = false,
-  }) async {
-    final result = await C2paPlatform.instance.enrollHardwareKey(
+  }) {
+    return C2paPlatform.instance.enrollHardwareKey(
       keyAlias: keyAlias,
       signingServerUrl: signingServerUrl,
       bearerToken: bearerToken,
       commonName: commonName,
       organization: organization,
       useStrongBox: useStrongBox,
-    );
-    return HardwareKeyEnrollment(
-      keyAlias: result['keyAlias'] as String? ?? keyAlias,
-      certificateChainPem: result['certificateChain'] as String,
     );
   }
 
@@ -2180,7 +2178,7 @@ class C2pa {
   }) {
     return C2paPlatform.instance.createSelfSignedCertificateChain(
       keyAlias: keyAlias,
-      config: config?.toMap(),
+      config: config,
     );
   }
 }

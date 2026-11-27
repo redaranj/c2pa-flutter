@@ -14,7 +14,6 @@ package org.guardianproject.c2pa
 
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
-import io.flutter.plugin.common.MethodCall
 import org.contentauth.c2pa.CertificateManager
 import org.contentauth.c2pa.KeyStoreSigner
 import org.contentauth.c2pa.StrongBoxSigner
@@ -41,13 +40,10 @@ class KeyManagement(private val appContext: () -> android.content.Context?) {
             false
         }
 
-    fun createKey(call: MethodCall) {
-        val keyAlias = call.req<String>("keyAlias")
-        val algorithm = call.req<String>("algorithm")
-        val useHardware = call.opt<Boolean>("useHardware") ?: false
+    fun createKey(keyAlias: String, algorithm: SigningAlgorithmMessage, useHardware: Boolean) {
         if (useHardware) {
-            if (algorithm != "es256") {
-                throw invalidArgument("Hardware keys are P-256: use es256, not $algorithm")
+            if (algorithm != SigningAlgorithmMessage.ES256) {
+                throw invalidArgument("Hardware keys are P-256: use es256, not ${algorithm.dartName}")
             }
             StrongBoxSigner.createKey(StrongBoxSigner.Config(keyTag = keyAlias))
         } else {
@@ -55,11 +51,11 @@ class KeyManagement(private val appContext: () -> android.content.Context?) {
         }
     }
 
-    private fun curveFor(algorithm: String): String = when (algorithm) {
-        "es256" -> "secp256r1"
-        "es384" -> "secp384r1"
-        "es512" -> "secp521r1"
-        else -> throw invalidArgument("createKey supports es256, es384 and es512, not $algorithm")
+    private fun curveFor(algorithm: SigningAlgorithmMessage): String = when (algorithm) {
+        SigningAlgorithmMessage.ES256 -> "secp256r1"
+        SigningAlgorithmMessage.ES384 -> "secp384r1"
+        SigningAlgorithmMessage.ES512 -> "secp521r1"
+        else -> throw invalidArgument("createKey supports es256, es384 and es512, not ${algorithm.dartName}")
     }
 
     /**
@@ -82,19 +78,16 @@ class KeyManagement(private val appContext: () -> android.content.Context?) {
         }
     }
 
-    fun deleteKey(call: MethodCall): Boolean {
-        val keyAlias = call.req<String>("keyAlias")
+    fun deleteKey(keyAlias: String): Boolean {
         if (StrongBoxSigner.deleteKey(keyAlias)) return true
         return KeyStoreSigner.deleteKey(keyAlias)
     }
 
-    fun keyExists(call: MethodCall): Boolean {
-        val keyAlias = call.req<String>("keyAlias")
+    fun keyExists(keyAlias: String): Boolean {
         return StrongBoxSigner.keyExists(keyAlias) || KeyStoreSigner.keyExists(keyAlias)
     }
 
-    fun exportPublicKey(call: MethodCall): String {
-        val keyAlias = call.req<String>("keyAlias")
+    fun exportPublicKey(keyAlias: String): String {
         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         val cert = keyStore.getCertificate(keyAlias)
             ?: throw PluginError("KEY_NOT_FOUND", "Key not found: $keyAlias")
@@ -102,34 +95,37 @@ class KeyManagement(private val appContext: () -> android.content.Context?) {
         return "-----BEGIN PUBLIC KEY-----\n$encoded-----END PUBLIC KEY-----"
     }
 
-    fun importKey(call: MethodCall) {
-        val keyAlias = call.req<String>("keyAlias")
-        val privateKey = parsePemPrivateKey(call.req("privateKeyPem"))
-        val chain = parsePemCertificateChain(call.req("certificateChainPem"))
+    fun importKey(keyAlias: String, privateKeyPem: String, certificateChainPem: String) {
+        val privateKey = parsePemPrivateKey(privateKeyPem)
+        val chain = parsePemCertificateChain(certificateChainPem)
         if (chain.isEmpty()) throw invalidArgument("No certificates found in certificate chain")
         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         keyStore.setKeyEntry(keyAlias, privateKey, null, chain.toTypedArray())
     }
 
-    fun createCSR(call: MethodCall): String {
-        val config = CertificateManager.CertificateConfig(
-            commonName = call.req("commonName"),
-            organization = call.opt("organization"),
-            organizationalUnit = call.opt("organizationalUnit"),
-            country = call.opt("country"),
-            state = call.opt("state"),
-            locality = call.opt("locality"),
+    fun createCSR(keyAlias: String, config: CertificateConfigMessage): String =
+        CertificateManager.createCSR(
+            keyAlias,
+            CertificateManager.CertificateConfig(
+                commonName = config.commonName,
+                organization = config.organization,
+                organizationalUnit = config.organizationalUnit,
+                country = config.country,
+                state = config.state,
+                locality = config.locality,
+            ),
         )
-        return CertificateManager.createCSR(call.req("keyAlias"), config)
-    }
 
-    fun enrollHardwareKey(call: MethodCall): Map<String, Any?> {
-        val keyAlias = call.req<String>("keyAlias")
-        val signingServerUrl = call.req<String>("signingServerUrl")
-        val bearerToken = call.opt<String>("bearerToken")
-        val commonName = call.opt<String>("commonName") ?: "C2PA Hardware Key"
-        val organization = call.opt<String>("organization") ?: "C2PA App"
-        val useStrongBox = call.opt<Boolean>("useStrongBox") ?: false
+    fun enrollHardwareKey(
+        keyAlias: String,
+        signingServerUrl: String,
+        bearerToken: String?,
+        commonNameOrNull: String?,
+        organizationOrNull: String?,
+        useStrongBox: Boolean,
+    ): HardwareKeyEnrollmentMessage {
+        val commonName = commonNameOrNull ?: "C2PA Hardware Key"
+        val organization = organizationOrNull ?: "C2PA App"
 
         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         if (keyStore.containsAlias(keyAlias)) keyStore.deleteEntry(keyAlias)
@@ -161,9 +157,9 @@ class KeyManagement(private val appContext: () -> android.content.Context?) {
                 throw PluginError("ENROLLMENT_ERROR", "Certificate enrollment failed: $error")
             }
             val response = connection.inputStream.bufferedReader().use { it.readText() }
-            return mapOf(
-                "certificateChain" to JSONObject(response).getString("certificate_chain"),
-                "keyAlias" to keyAlias,
+            return HardwareKeyEnrollmentMessage(
+                keyAlias = keyAlias,
+                certificateChainPem = JSONObject(response).getString("certificate_chain"),
             )
         } finally {
             connection.disconnect()

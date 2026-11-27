@@ -34,9 +34,6 @@ struct PluginError: Error {
     }
 }
 
-/// Marker for a method the plugin does not handle.
-struct NotImplementedMarker {}
-
 /// Thread-safe map from Dart-visible integer handles to native objects.
 final class HandleRegistry<T> {
     private var items: [Int: T] = [:]
@@ -75,54 +72,6 @@ final class HandleRegistry<T> {
     func removeAll() {
         lock.lock(); defer { lock.unlock() }
         items.removeAll()
-    }
-}
-
-/// Typed access to a method call's argument map.
-struct Args {
-    let map: [String: Any]
-
-    init(_ call: FlutterMethodCall) {
-        map = call.arguments as? [String: Any] ?? [:]
-    }
-
-    init(map: [String: Any]) {
-        self.map = map
-    }
-
-    func opt<T>(_ key: String) -> T? {
-        let value = map[key]
-        if value is NSNull { return nil }
-        return value as? T
-    }
-
-    func req<T>(_ key: String) throws -> T {
-        guard let value: T = opt(key) else {
-            throw PluginError.invalidArgument("\(key) is required")
-        }
-        return value
-    }
-
-    func optInt(_ key: String) -> Int? {
-        (map[key] as? NSNumber)?.intValue
-    }
-
-    func reqInt(_ key: String) throws -> Int {
-        guard let value = optInt(key) else {
-            throw PluginError.invalidArgument("\(key) is required")
-        }
-        return value
-    }
-
-    func optData(_ key: String) -> Data? {
-        (map[key] as? FlutterStandardTypedData)?.data
-    }
-
-    func reqData(_ key: String) throws -> Data {
-        guard let value = optData(key) else {
-            throw PluginError.invalidArgument("\(key) is required")
-        }
-        return value
     }
 }
 
@@ -180,7 +129,7 @@ final class TempFile {
     }
 }
 
-func mimeType(forPath path: String) -> String {
+func mimeTypeForPath(_ path: String) -> String {
     switch (path as NSString).pathExtension.lowercased() {
     case "jpg", "jpeg": return "image/jpeg"
     case "png": return "image/png"
@@ -202,17 +151,21 @@ func mimeType(forPath path: String) -> String {
     }
 }
 
-func parseAlgorithm(_ value: String) throws -> SigningAlgorithm {
-    switch value.lowercased() {
-    case "es256": return .es256
-    case "es384": return .es384
-    case "es512": return .es512
-    case "ps256": return .ps256
-    case "ps384": return .ps384
-    case "ps512": return .ps512
-    case "ed25519": return .ed25519
-    default: throw PluginError.invalidArgument("Unknown signing algorithm: \(value)")
+extension SigningAlgorithmMessage {
+    var sdk: SigningAlgorithm {
+        switch self {
+        case .es256: return .es256
+        case .es384: return .es384
+        case .es512: return .es512
+        case .ps256: return .ps256
+        case .ps384: return .ps384
+        case .ps512: return .ps512
+        case .ed25519: return .ed25519
+        }
     }
+
+    /// The algorithm's name as Dart spells it, for messages.
+    var dartName: String { String(describing: self) }
 }
 
 /// IPTC digital source type URL for a Dart `DigitalSourceType` name.
@@ -227,11 +180,11 @@ func parseDigitalSourceType(_ name: String) -> DigitalSourceType? {
     DigitalSourceType(rawValue: digitalSourceTypeURL(name))
 }
 
-func hashTypeName(_ type: HashType) -> String {
+func hashTypeMessage(_ type: HashType) -> HashTypeMessage {
     switch type {
-    case .dataHash: return "dataHash"
-    case .bmffHash: return "bmffHash"
-    case .boxHash: return "boxHash"
+    case .dataHash: return .dataHash
+    case .bmffHash: return .bmffHash
+    case .boxHash: return .boxHash
     }
 }
 
@@ -255,7 +208,3 @@ func progressPhaseName(_ phase: ProgressPhase) -> String {
     }
 }
 
-func typed(_ data: Data?) -> Any {
-    guard let data = data else { return NSNull() }
-    return FlutterStandardTypedData(bytes: data)
-}

@@ -15,11 +15,13 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:c2pa_flutter/c2pa.dart';
 import 'package:c2pa_flutter/c2pa_platform_interface.dart';
-import 'package:c2pa_flutter/c2pa_method_channel.dart';
+import 'package:c2pa_flutter/c2pa_pigeon.dart';
 
 import 'mocks/mock_c2pa_platform.dart';
 
 void main() {
+  // Captured before any test installs the mock.
+  final defaultPlatform = C2paPlatform.instance;
   late MockC2paPlatform mockPlatform;
   late C2pa c2pa;
 
@@ -34,10 +36,8 @@ void main() {
   });
 
   group('Platform verification', () {
-    test('MethodChannelC2pa is the default instance', () {
-      // Reset to get actual default
-      final initialPlatform = MethodChannelC2pa();
-      expect(initialPlatform, isInstanceOf<MethodChannelC2pa>());
+    test('PigeonC2pa is the default instance', () {
+      expect(defaultPlatform, isA<PigeonC2pa>());
     });
   });
 

@@ -53,7 +53,7 @@ void main() {
       expect(args['settingsHandle'], settings.handle);
       expect(args['signerType'], 'PemSigner');
       expect(args['progress'], true);
-      expect(args['httpResolver'], 'native');
+      expect(args['httpResolver'], 'NativeHttpResolver');
       expect(mock.contexts[context.handle]!.onProgress, same(onProgress));
     });
 

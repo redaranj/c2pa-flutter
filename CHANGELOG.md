@@ -23,6 +23,9 @@ Moves to c2pa-swift 0.1.0 and c2pa-android 0.1.2 (c2pa-rs 0.92). Both SDKs now s
 * Removed `C2pa.readManifestFromFileWithContext`. Pass the context in `ReaderOptions`.
 * The package needs Flutter 3.38 or later, which ships the Dart 3.10 SDK it already required.
 
+* The Dart, Kotlin and Swift sides now talk through a Pigeon-generated, typed API (`pigeons/c2pa_api.dart`) instead of a hand-written method channel. `MethodChannelC2pa` is replaced by `PigeonC2pa`; apps that call the public `C2pa` API are unaffected.
+* `CertificateConfig.email` now reaches the iOS certificate generator; the old channel sent it under a key iOS never read.
+
 ### Added
 
 * `C2paContext.create(settings:, signer:, onProgress:, httpResolver:)` and `C2paContext.cancel()`.

@@ -15,7 +15,7 @@ import 'dart:typed_data';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 import 'c2pa.dart';
-import 'c2pa_method_channel.dart';
+import 'c2pa_pigeon.dart';
 
 Never _unimplemented(String method) =>
     throw UnimplementedError('$method() has not been implemented.');
@@ -29,7 +29,7 @@ abstract class C2paPlatform extends PlatformInterface {
 
   static final Object _token = Object();
 
-  static C2paPlatform _instance = MethodChannelC2pa();
+  static C2paPlatform _instance = PigeonC2pa();
 
   /// Returns the current platform instance.
   static C2paPlatform get instance => _instance;
@@ -320,15 +320,10 @@ abstract class C2paPlatform extends PlatformInterface {
 
   Future<String> createCSR({
     required String keyAlias,
-    required String commonName,
-    String? organization,
-    String? organizationalUnit,
-    String? country,
-    String? state,
-    String? locality,
+    required CertificateConfig config,
   }) => _unimplemented('createCSR');
 
-  Future<Map<String, dynamic>> enrollHardwareKey({
+  Future<HardwareKeyEnrollment> enrollHardwareKey({
     required String keyAlias,
     required String signingServerUrl,
     String? bearerToken,
@@ -339,7 +334,7 @@ abstract class C2paPlatform extends PlatformInterface {
 
   Future<String> createSelfSignedCertificateChain({
     required String keyAlias,
-    Map<String, dynamic>? config,
+    CertificateConfig? config,
   }) => _unimplemented('createSelfSignedCertificateChain');
 
   // ===========================================================================

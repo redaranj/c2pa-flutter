@@ -18,6 +18,7 @@ import 'package:flutter/services.dart';
 
 import 'c2pa.dart';
 import 'c2pa_platform_interface.dart';
+import 'src/c2pa_api.g.dart';
 
 /// Dart-side callbacks attached to one native context.
 class _ContextCallbacks {
@@ -32,114 +33,166 @@ class _ContextCallbacks {
   });
 }
 
-/// A [MethodChannel] that reports every native failure as a
-/// [C2paException] instead of a raw [PlatformException].
-class C2paMethodChannel extends MethodChannel {
-  const C2paMethodChannel(super.name);
+/// [C2paPlatform] implemented over the Pigeon-generated [C2paHostApi], with
+/// [C2paFlutterApi] answering the native side's signing, progress and HTTP
+/// callbacks.
+class PigeonC2pa extends C2paPlatform implements C2paFlutterApi {
+  /// [hostApi] replaces the generated API in tests.
+  PigeonC2pa({@visibleForTesting C2paHostApi? hostApi})
+    : _api = hostApi ?? C2paHostApi();
 
-  @override
-  Future<T?> invokeMethod<T>(String method, [dynamic arguments]) async {
-    try {
-      return await super.invokeMethod<T>(method, arguments);
-    } on PlatformException catch (e) {
-      throw C2paException.fromPlatformException(e);
-    }
-  }
-}
-
-/// Method channel implementation of [C2paPlatform]
-class MethodChannelC2pa extends C2paPlatform {
-  @visibleForTesting
-  final MethodChannel methodChannel = const C2paMethodChannel(
-    'org.guardianproject.c2pa',
-  );
+  final C2paHostApi _api;
 
   final Map<String, Future<Uint8List> Function(Uint8List)> _signCallbacks = {};
   final Map<int, _ContextCallbacks> _contextCallbacks = {};
   int _nextCallbackId = 0;
-  bool _handlerRegistered = false;
+  bool _flutterApiRegistered = false;
 
-  void _ensureHandlerRegistered() {
-    if (_handlerRegistered) return;
-    _handlerRegistered = true;
-    methodChannel.setMethodCallHandler(_handleNativeCall);
-  }
-
-  Future<dynamic> _handleNativeCall(MethodCall call) async {
-    final args = call.arguments as Map<dynamic, dynamic>? ?? const {};
-    switch (call.method) {
-      case 'signCallback':
-        final callbackId = args['callbackId'] as String;
-        final callback = _signCallbacks[callbackId];
-        if (callback == null) {
-          throw PlatformException(
-            code: 'CALLBACK_NOT_FOUND',
-            message: 'Callback $callbackId not found',
-          );
-        }
-        return callback(args['data'] as Uint8List);
-      case 'contextProgress':
-        final callbacks = _contextCallbacks[args['contextHandle'] as int?];
-        callbacks?.onProgress?.call(C2paProgress.fromMap(args));
-        return null;
-      case 'httpResolve':
-        final resolver =
-            _contextCallbacks[args['contextHandle'] as int?]?.httpResolver;
-        if (resolver is! CallbackHttpResolver) {
-          throw PlatformException(
-            code: 'RESOLVER_NOT_FOUND',
-            message: 'No HTTP resolver for context ${args['contextHandle']}',
-          );
-        }
-        final response = await resolver.resolve(C2paHttpRequest.fromMap(args));
-        return response.toMap();
-      default:
-        throw MissingPluginException('Method ${call.method} not implemented');
+  /// Calls [body], reporting a native failure as a [C2paException].
+  Future<T> _call<T>(Future<T> Function() body) async {
+    try {
+      return await body();
+    } on PlatformException catch (e) {
+      throw C2paException.fromPlatformException(e);
     }
   }
 
-  /// Serializes [signer] for the native side, registering a Dart callback
-  /// for every [CallbackSigner] it contains and recording its id in [ids].
-  Map<String, dynamic> _serializeSigner(C2paSigner signer, List<String> ids) {
+  /// Answers the native side's callbacks from now on. Registered lazily,
+  /// since the binding may not exist yet when the platform is created.
+  void _ensureFlutterApi() {
+    if (_flutterApiRegistered) return;
+    _flutterApiRegistered = true;
+    C2paFlutterApi.setUp(this);
+  }
+
+  // ===========================================================================
+  // C2paFlutterApi: calls from the native side
+  // ===========================================================================
+
+  @override
+  Future<Uint8List> sign(String callbackId, Uint8List data) {
+    final callback = _signCallbacks[callbackId];
+    if (callback == null) {
+      throw PlatformException(
+        code: 'CALLBACK_NOT_FOUND',
+        message: 'Callback $callbackId not found',
+      );
+    }
+    return callback(data);
+  }
+
+  @override
+  void progress(int contextHandle, String phase, int step, int total) {
+    _contextCallbacks[contextHandle]?.onProgress?.call(
+      C2paProgress(
+        phase: C2paProgressPhase.fromName(phase),
+        step: step,
+        total: total,
+      ),
+    );
+  }
+
+  @override
+  Future<HttpResponseMessage> resolveHttp(
+    int contextHandle,
+    HttpRequestMessage request,
+  ) async {
+    final resolver = _contextCallbacks[contextHandle]?.httpResolver;
+    if (resolver is! CallbackHttpResolver) {
+      throw PlatformException(
+        code: 'RESOLVER_NOT_FOUND',
+        message: 'No HTTP resolver for context $contextHandle',
+      );
+    }
+    final response = await resolver.resolve(
+      C2paHttpRequest(
+        url: request.url,
+        method: request.method,
+        headers: request.headers,
+        body: request.body,
+      ),
+    );
+    return HttpResponseMessage(status: response.status, body: response.body);
+  }
+
+  // ===========================================================================
+  // Signers
+  // ===========================================================================
+
+  /// Converts [signer] to its message, registering a Dart callback for every
+  /// [CallbackSigner] it contains and recording the callback ids in [ids].
+  SignerMessage _signerMessage(C2paSigner signer, List<String> ids) {
     switch (signer) {
+      case PemSigner():
+        return PemSignerMessage(
+          algorithm: _algorithm(signer.algorithm),
+          certificatePem: signer.certificatePem,
+          privateKeyPem: signer.privateKeyPem,
+          tsaUrl: signer.tsaUrl,
+        );
       case CallbackSigner():
-        _ensureHandlerRegistered();
+        _ensureFlutterApi();
         final id = 'callback_${_nextCallbackId++}';
         _signCallbacks[id] = signer.signCallback;
         ids.add(id);
-        return {...signer.toMap(), 'callbackId': id};
+        return CallbackSignerMessage(
+          algorithm: _algorithm(signer.algorithm),
+          certificateChainPem: signer.certificateChainPem,
+          callbackId: id,
+          tsaUrl: signer.tsaUrl,
+        );
+      case KeystoreSigner():
+        return KeystoreSignerMessage(
+          algorithm: _algorithm(signer.algorithm),
+          certificateChainPem: signer.certificateChainPem,
+          keyAlias: signer.keyAlias,
+          requireUserAuthentication: signer.requireUserAuthentication,
+          tsaUrl: signer.tsaUrl,
+        );
+      case HardwareSigner():
+        return HardwareSignerMessage(
+          certificateChainPem: signer.certificateChainPem,
+          keyAlias: signer.keyAlias,
+          requireUserAuthentication: signer.requireUserAuthentication,
+          tsaUrl: signer.tsaUrl,
+        );
+      case RemoteSigner():
+        return RemoteSignerMessage(
+          configurationUrl: signer.configurationUrl,
+          bearerToken: signer.bearerToken,
+          customHeaders: signer.customHeaders ?? const {},
+        );
+      case SettingsSigner():
+        return SettingsSignerMessage(
+          settings: signer.settingsString,
+          format: signer.format,
+        );
       case CawgIdentitySigner():
-        return {
-          ...signer.toMap(),
-          'claimSigner': _serializeSigner(signer.claimSigner, ids),
-          'identitySigner': _serializeSigner(signer.identitySigner, ids),
-        };
-      default:
-        return signer.toMap();
+        return CawgIdentitySignerMessage(
+          claimSigner: _signerMessage(signer.claimSigner, ids),
+          identitySigner: _signerMessage(signer.identitySigner, ids),
+          referencedAssertions: signer.referencedAssertions,
+          roles: signer.roles,
+        );
     }
   }
 
-  /// Runs [body] with [signer] serialized, releasing its callbacks afterwards.
+  static SigningAlgorithmMessage _algorithm(SigningAlgorithm algorithm) =>
+      SigningAlgorithmMessage.values.byName(algorithm.name);
+
+  /// Runs [body] with [signer] converted, releasing its callbacks afterwards.
   Future<T> _withSigner<T>(
     C2paSigner? signer,
-    Future<T> Function(Map<String, dynamic>? signerMap) body,
+    Future<T> Function(SignerMessage? message) body,
   ) async {
-    if (signer == null) return body(null);
+    if (signer == null) return _call(() => body(null));
     final ids = <String>[];
-    final signerMap = _serializeSigner(signer, ids);
+    final message = _signerMessage(signer, ids);
     try {
-      return await body(signerMap);
+      return await _call(() => body(message));
     } finally {
       ids.forEach(_signCallbacks.remove);
     }
-  }
-
-  Future<T> _invoke<T>(String method, [Map<String, dynamic>? arguments]) async {
-    final result = await methodChannel.invokeMethod<T>(method, arguments);
-    if (result == null) {
-      throw C2paPlatformException('ERROR', '$method returned null');
-    }
-    return result;
   }
 
   // ===========================================================================
@@ -147,35 +200,33 @@ class MethodChannelC2pa extends C2paPlatform {
   // ===========================================================================
 
   @override
-  Future<String?> getPlatformVersion() =>
-      methodChannel.invokeMethod<String>('getPlatformVersion');
+  Future<String?> getPlatformVersion() => _call(_api.getPlatformVersion);
 
   @override
-  Future<String?> getVersion() =>
-      methodChannel.invokeMethod<String>('getVersion');
+  Future<String?> getVersion() => _call(_api.getVersion);
 
   // ===========================================================================
   // Reader
   // ===========================================================================
 
+  static ReadFormatMessage _format(bool detailed) =>
+      detailed ? ReadFormatMessage.detailed : ReadFormatMessage.json;
+
   @override
   Future<String> readFile(String path) =>
-      _invoke<String>('readFile', {'path': path});
+      _call(() => _api.readFile(path, null, ReadFormatMessage.json, null));
 
   @override
   Future<String> readBytes(Uint8List data, String mimeType) =>
-      _invoke<String>('readBytes', {'data': data, 'mimeType': mimeType});
+      _call(() => _api.readBytes(data, mimeType, ReadFormatMessage.json, null));
 
   @override
   Future<String> readFileDetailed(
     String path,
     bool detailed, {
     int? contextHandle,
-  }) => _invoke<String>('readFileDetailed', {
-    'path': path,
-    'detailed': detailed,
-    'contextHandle': contextHandle,
-  });
+  }) =>
+      _call(() => _api.readFile(path, null, _format(detailed), contextHandle));
 
   @override
   Future<String> readBytesDetailed(
@@ -183,12 +234,9 @@ class MethodChannelC2pa extends C2paPlatform {
     String mimeType,
     bool detailed, {
     int? contextHandle,
-  }) => _invoke<String>('readBytesDetailed', {
-    'data': data,
-    'mimeType': mimeType,
-    'detailed': detailed,
-    'contextHandle': contextHandle,
-  });
+  }) => _call(
+    () => _api.readBytes(data, mimeType, _format(detailed), contextHandle),
+  );
 
   @override
   Future<String> readCrJson({
@@ -200,12 +248,25 @@ class MethodChannelC2pa extends C2paPlatform {
     if ((path == null) == (data == null)) {
       throw ArgumentError('Provide exactly one of path or data');
     }
-    return _invoke<String>('readCrJson', {
-      'path': path,
-      'data': data,
-      'mimeType': mimeType,
-      'contextHandle': contextHandle,
-    });
+    if (data != null) {
+      if (mimeType == null) throw ArgumentError.notNull('mimeType');
+      return _call(
+        () => _api.readBytes(
+          data,
+          mimeType,
+          ReadFormatMessage.crJson,
+          contextHandle,
+        ),
+      );
+    }
+    return _call(
+      () => _api.readFile(
+        path!,
+        mimeType,
+        ReadFormatMessage.crJson,
+        contextHandle,
+      ),
+    );
   }
 
   @override
@@ -220,14 +281,16 @@ class MethodChannelC2pa extends C2paPlatform {
     if ((path == null) == (data == null)) {
       throw ArgumentError('Provide exactly one of path or data');
     }
-    return _invoke<String>('readWithManifest', {
-      'path': path,
-      'data': data,
-      'mimeType': mimeType,
-      'manifestData': manifestData,
-      'detailed': detailed,
-      'contextHandle': contextHandle,
-    });
+    return _call(
+      () => _api.readWithManifest(
+        path,
+        data,
+        mimeType,
+        manifestData,
+        _format(detailed),
+        contextHandle,
+      ),
+    );
   }
 
   @override
@@ -237,13 +300,15 @@ class MethodChannelC2pa extends C2paPlatform {
     String? mimeType,
     bool detailed = false,
     int? contextHandle,
-  }) => _invoke<String>('readFragment', {
-    'initPath': initPath,
-    'fragmentPath': fragmentPath,
-    'mimeType': mimeType,
-    'detailed': detailed,
-    'contextHandle': contextHandle,
-  });
+  }) => _call(
+    () => _api.readFragment(
+      initPath,
+      fragmentPath,
+      mimeType,
+      _format(detailed),
+      contextHandle,
+    ),
+  );
 
   @override
   Future<Uint8List> extractResource(
@@ -251,44 +316,23 @@ class MethodChannelC2pa extends C2paPlatform {
     String mimeType,
     String uri, {
     int? contextHandle,
-  }) => _invoke<Uint8List>('extractResource', {
-    'data': data,
-    'mimeType': mimeType,
-    'uri': uri,
-    'contextHandle': contextHandle,
-  });
+  }) => _call(() => _api.extractResource(data, mimeType, uri, contextHandle));
 
   @override
   Future<String?> getRemoteUrl(String path, {String? mimeType}) =>
-      methodChannel.invokeMethod<String>('getRemoteUrl', {
-        'path': path,
-        'mimeType': mimeType,
-      });
+      _call(() => _api.getRemoteUrl(path, mimeType));
 
   @override
-  Future<bool> isManifestEmbedded(String path, {String? mimeType}) async {
-    final result = await methodChannel.invokeMethod<bool>(
-      'isManifestEmbedded',
-      {'path': path, 'mimeType': mimeType},
-    );
-    return result ?? false;
-  }
+  Future<bool> isManifestEmbedded(String path, {String? mimeType}) =>
+      _call(() => _api.isManifestEmbedded(path, mimeType));
 
   @override
-  Future<List<String>> getSupportedReadMimeTypes() async {
-    final result = await methodChannel.invokeMethod<List<dynamic>>(
-      'getSupportedReadMimeTypes',
-    );
-    return result?.cast<String>() ?? [];
-  }
+  Future<List<String>> getSupportedReadMimeTypes() =>
+      _call(_api.getSupportedReadMimeTypes);
 
   @override
-  Future<List<String>> getSupportedSignMimeTypes() async {
-    final result = await methodChannel.invokeMethod<List<dynamic>>(
-      'getSupportedSignMimeTypes',
-    );
-    return result?.cast<String>() ?? [];
-  }
+  Future<List<String>> getSupportedSignMimeTypes() =>
+      _call(_api.getSupportedSignMimeTypes);
 
   // ===========================================================================
   // One-shot signing
@@ -300,16 +344,16 @@ class MethodChannelC2pa extends C2paPlatform {
     required String mimeType,
     required String manifestJson,
     required C2paSigner signer,
-  }) => _withSigner(signer, (signerMap) async {
-    final result = await _invoke<Map<dynamic, dynamic>>('signBytes', {
-      'sourceData': sourceData,
-      'mimeType': mimeType,
-      'manifestJson': manifestJson,
-      'signer': signerMap,
-    });
+  }) => _withSigner(signer, (message) async {
+    final result = await _api.signBytes(
+      sourceData,
+      mimeType,
+      manifestJson,
+      message!,
+    );
     return SignResult(
-      signedData: result['signedData'] as Uint8List,
-      manifestBytes: result['manifestBytes'] as Uint8List?,
+      signedData: result.signedData!,
+      manifestBytes: result.manifestBytes,
     );
   });
 
@@ -319,118 +363,90 @@ class MethodChannelC2pa extends C2paPlatform {
     required String destPath,
     required String manifestJson,
     required C2paSigner signer,
-  }) => _withSigner(signer, (signerMap) async {
-    await methodChannel.invokeMethod<void>('signFile', {
-      'sourcePath': sourcePath,
-      'destPath': destPath,
-      'manifestJson': manifestJson,
-      'signer': signerMap,
-    });
-  });
+  }) => _withSigner(
+    signer,
+    (message) => _api.signFile(sourcePath, destPath, manifestJson, message!),
+  );
 
   @override
-  Future<int> getSignerReserveSize(C2paSigner signer) => _withSigner(
-    signer,
-    (signerMap) => _invoke<int>('getSignerReserveSize', {'signer': signerMap}),
-  );
+  Future<int> getSignerReserveSize(C2paSigner signer) =>
+      _withSigner(signer, (message) => _api.getSignerReserveSize(message!));
 
   @override
   Future<Uint8List> composeManifest({
     required Uint8List manifestBytes,
     required String mimeType,
-  }) => _invoke<Uint8List>('composeManifest', {
-    'manifestBytes': manifestBytes,
-    'mimeType': mimeType,
-  });
+  }) => _call(() => _api.composeManifest(manifestBytes, mimeType));
 
   // ===========================================================================
   // Builder
   // ===========================================================================
 
+  PigeonManifestBuilder _builder(int handle) =>
+      PigeonManifestBuilder(this, handle);
+
   @override
   Future<ManifestBuilder> createBuilder(
     String manifestJson, {
     int? contextHandle,
-  }) async {
-    final handle = await _invoke<int>('createBuilder', {
-      'manifestJson': manifestJson,
-      'contextHandle': contextHandle,
-    });
-    return MethodChannelManifestBuilder(this, handle);
-  }
+  }) async => _builder(
+    await _call(() => _api.createBuilder(manifestJson, contextHandle)),
+  );
 
   @override
   Future<ManifestBuilder> createBuilderFromArchive(
     Uint8List archiveData, {
     int? contextHandle,
-  }) async {
-    final handle = await _invoke<int>('createBuilderFromArchive', {
-      'archiveData': archiveData,
-      'contextHandle': contextHandle,
-    });
-    return MethodChannelManifestBuilder(this, handle);
-  }
+  }) async => _builder(
+    await _call(
+      () => _api.createBuilderFromArchive(archiveData, contextHandle),
+    ),
+  );
 
   @override
   Future<ManifestBuilder> createBuilderWithContext(
     int contextHandle,
     String manifestJson,
-  ) async {
-    final handle = await _invoke<int>('createBuilderWithContext', {
-      'contextHandle': contextHandle,
-      'manifestJson': manifestJson,
-    });
-    return MethodChannelManifestBuilder(this, handle);
-  }
+  ) => createBuilder(manifestJson, contextHandle: contextHandle);
 
   @override
   Future<ManifestBuilder> createBuilderWithSettings(
     String manifestJson,
     int settingsHandle,
-  ) async {
-    final handle = await _invoke<int>('createBuilderWithSettings', {
-      'manifestJson': manifestJson,
-      'settingsHandle': settingsHandle,
-    });
-    return MethodChannelManifestBuilder(this, handle);
-  }
+  ) async => _builder(
+    await _call(
+      () => _api.createBuilderWithSettings(manifestJson, settingsHandle),
+    ),
+  );
 
   @override
   Future<void> builderSetIntent(
     int handle,
     ManifestIntent intent,
     DigitalSourceType? digitalSourceType,
-  ) => methodChannel.invokeMethod<void>('builderSetIntent', {
-    'handle': handle,
-    'intent': intent.name,
-    'digitalSourceType': digitalSourceType?.name,
-  });
+  ) => _call(
+    () => _api.builderSetIntent(
+      handle,
+      ManifestIntentMessage.values.byName(intent.name),
+      digitalSourceType?.name,
+    ),
+  );
 
   @override
   Future<void> builderSetNoEmbed(int handle) =>
-      methodChannel.invokeMethod<void>('builderSetNoEmbed', {'handle': handle});
+      _call(() => _api.builderSetNoEmbed(handle));
 
   @override
   Future<void> builderSetRemoteUrl(int handle, String url) =>
-      methodChannel.invokeMethod<void>('builderSetRemoteUrl', {
-        'handle': handle,
-        'url': url,
-      });
+      _call(() => _api.builderSetRemoteUrl(handle, url));
 
   @override
   Future<void> builderSetBasePath(int handle, String path) =>
-      methodChannel.invokeMethod<void>('builderSetBasePath', {
-        'handle': handle,
-        'path': path,
-      });
+      _call(() => _api.builderSetBasePath(handle, path));
 
   @override
   Future<void> builderAddResource(int handle, String uri, Uint8List data) =>
-      methodChannel.invokeMethod<void>('builderAddResource', {
-        'handle': handle,
-        'uri': uri,
-        'data': data,
-      });
+      _call(() => _api.builderAddResource(handle, uri, data));
 
   @override
   Future<void> builderAddIngredient(
@@ -438,12 +454,9 @@ class MethodChannelC2pa extends C2paPlatform {
     Uint8List data,
     String mimeType,
     String? ingredientJson,
-  ) => methodChannel.invokeMethod<void>('builderAddIngredient', {
-    'handle': handle,
-    'data': data,
-    'mimeType': mimeType,
-    'ingredientJson': ingredientJson,
-  });
+  ) => _call(
+    () => _api.builderAddIngredient(handle, data, mimeType, ingredientJson),
+  );
 
   @override
   Future<void> builderAddIngredientFromFile(
@@ -451,39 +464,32 @@ class MethodChannelC2pa extends C2paPlatform {
     String path,
     String? mimeType,
     String? ingredientJson,
-  ) => methodChannel.invokeMethod<void>('builderAddIngredientFromFile', {
-    'handle': handle,
-    'path': path,
-    'mimeType': mimeType,
-    'ingredientJson': ingredientJson,
-  });
+  ) => _call(
+    () => _api.builderAddIngredientFromFile(
+      handle,
+      path,
+      mimeType,
+      ingredientJson,
+    ),
+  );
 
   @override
   Future<void> builderAddIngredientFromArchive(int handle, Uint8List archive) =>
-      methodChannel.invokeMethod<void>('builderAddIngredientFromArchive', {
-        'handle': handle,
-        'archiveData': archive,
-      });
+      _call(() => _api.builderAddIngredientFromArchive(handle, archive));
 
   @override
   Future<Uint8List> builderWriteIngredientArchive(
     int handle,
     String ingredientId,
-  ) => _invoke<Uint8List>('builderWriteIngredientArchive', {
-    'handle': handle,
-    'ingredientId': ingredientId,
-  });
+  ) => _call(() => _api.builderWriteIngredientArchive(handle, ingredientId));
 
   @override
   Future<void> builderAddAction(int handle, String actionJson) =>
-      methodChannel.invokeMethod<void>('builderAddAction', {
-        'handle': handle,
-        'actionJson': actionJson,
-      });
+      _call(() => _api.builderAddAction(handle, actionJson));
 
   @override
   Future<Uint8List> builderToArchive(int handle) =>
-      _invoke<Uint8List>('builderToArchive', {'handle': handle});
+      _call(() => _api.builderToArchive(handle));
 
   @override
   Future<BuilderSignResult> builderSign(
@@ -491,17 +497,17 @@ class MethodChannelC2pa extends C2paPlatform {
     Uint8List sourceData,
     String mimeType,
     C2paSigner? signer,
-  ) => _withSigner(signer, (signerMap) async {
-    final result = await _invoke<Map<dynamic, dynamic>>('builderSign', {
-      'handle': handle,
-      'sourceData': sourceData,
-      'mimeType': mimeType,
-      'signer': signerMap,
-    });
+  ) => _withSigner(signer, (message) async {
+    final result = await _api.builderSign(
+      handle,
+      sourceData,
+      mimeType,
+      message,
+    );
     return BuilderSignResult(
-      signedData: result['signedData'] as Uint8List,
-      manifestBytes: result['manifestBytes'] as Uint8List?,
-      manifestSize: (result['manifestSize'] as num?)?.toInt() ?? 0,
+      signedData: result.signedData!,
+      manifestBytes: result.manifestBytes,
+      manifestSize: result.manifestSize,
     );
   });
 
@@ -512,87 +518,66 @@ class MethodChannelC2pa extends C2paPlatform {
     String destPath,
     C2paSigner? signer, {
     String? mimeType,
-  }) => _withSigner(signer, (signerMap) async {
-    final result = await _invoke<Map<dynamic, dynamic>>('builderSignFile', {
-      'handle': handle,
-      'sourcePath': sourcePath,
-      'destPath': destPath,
-      'mimeType': mimeType,
-      'signer': signerMap,
-    });
+  }) => _withSigner(signer, (message) async {
+    final result = await _api.builderSignFile(
+      handle,
+      sourcePath,
+      destPath,
+      mimeType,
+      message,
+    );
     return BuilderFileSignResult(
-      manifestBytes: result['manifestBytes'] as Uint8List?,
-      manifestSize: (result['manifestSize'] as num?)?.toInt() ?? 0,
+      manifestBytes: result.manifestBytes,
+      manifestSize: result.manifestSize,
     );
   });
 
   @override
   Future<bool> builderNeedsPlaceholder(int handle, String mimeType) =>
-      _invoke<bool>('builderNeedsPlaceholder', {
-        'handle': handle,
-        'mimeType': mimeType,
-      });
+      _call(() => _api.builderNeedsPlaceholder(handle, mimeType));
 
   @override
   Future<Uint8List> builderPlaceholder(int handle, String mimeType) =>
-      _invoke<Uint8List>('builderPlaceholder', {
-        'handle': handle,
-        'mimeType': mimeType,
-      });
+      _call(() => _api.builderPlaceholder(handle, mimeType));
 
   @override
   Future<void> builderSetDataHashExclusions(
     int handle,
     List<DataHashExclusion> exclusions,
-  ) => methodChannel.invokeMethod<void>('builderSetDataHashExclusions', {
-    'handle': handle,
-    'exclusions': exclusions.map((e) => e.toList()).toList(),
-  });
+  ) => _call(
+    () => _api.builderSetDataHashExclusions(handle, [
+      for (final e in exclusions)
+        DataHashExclusionMessage(start: e.start, length: e.length),
+    ]),
+  );
 
   @override
   Future<void> builderUpdateHashFromBytes(
     int handle,
     String mimeType,
     Uint8List data,
-  ) => methodChannel.invokeMethod<void>('builderUpdateHashFromBytes', {
-    'handle': handle,
-    'mimeType': mimeType,
-    'data': data,
-  });
+  ) => _call(() => _api.builderUpdateHashFromBytes(handle, mimeType, data));
 
   @override
   Future<void> builderUpdateHashFromFile(
     int handle,
     String path, {
     String? mimeType,
-  }) => methodChannel.invokeMethod<void>('builderUpdateHashFromFile', {
-    'handle': handle,
-    'path': path,
-    'mimeType': mimeType,
-  });
+  }) => _call(() => _api.builderUpdateHashFromFile(handle, path, mimeType));
 
   @override
   Future<Uint8List> builderSignEmbeddable(int handle, String mimeType) =>
-      _invoke<Uint8List>('builderSignEmbeddable', {
-        'handle': handle,
-        'mimeType': mimeType,
-      });
+      _call(() => _api.builderSignEmbeddable(handle, mimeType));
 
   @override
   Future<C2paHashType> builderHashType(int handle, String mimeType) async {
-    final name = await _invoke<String>('builderHashType', {
-      'handle': handle,
-      'mimeType': mimeType,
-    });
-    return C2paHashType.fromName(name);
+    final type = await _call(() => _api.builderHashType(handle, mimeType));
+    return C2paHashType.values.byName(type.name);
   }
 
   @override
   Future<void> builderSetFixedSizeMerkle(int handle, int fixedSizeKb) =>
-      methodChannel.invokeMethod<void>('builderSetFixedSizeMerkle', {
-        'handle': handle,
-        'fixedSizeKb': fixedSizeKb,
-      });
+      _call(() => _api.builderSetFixedSizeMerkle(handle, fixedSizeKb));
 
   @override
   Future<void> builderHashMdatBytes(
@@ -600,92 +585,56 @@ class MethodChannelC2pa extends C2paPlatform {
     required int mdatId,
     required Uint8List data,
     bool largeSize = false,
-  }) => methodChannel.invokeMethod<void>('builderHashMdatBytes', {
-    'handle': handle,
-    'mdatId': mdatId,
-    'data': data,
-    'largeSize': largeSize,
-  });
+  }) => _call(() => _api.builderHashMdatBytes(handle, mdatId, data, largeSize));
 
   @override
   Future<void> builderDispose(int handle) =>
-      methodChannel.invokeMethod<void>('builderDispose', {'handle': handle});
+      _call(() => _api.builderDispose(handle));
 
   // ===========================================================================
   // Key Management
   // ===========================================================================
 
   @override
-  Future<bool> isHardwareSigningAvailable() async {
-    final result = await methodChannel.invokeMethod<bool>(
-      'isHardwareSigningAvailable',
-    );
-    return result ?? false;
-  }
+  Future<bool> isHardwareSigningAvailable() =>
+      _call(_api.isHardwareSigningAvailable);
 
   @override
   Future<void> createKey({
     required String keyAlias,
     required SigningAlgorithm algorithm,
     required bool useHardware,
-  }) => methodChannel.invokeMethod<void>('createKey', {
-    'keyAlias': keyAlias,
-    'algorithm': algorithm.name,
-    'useHardware': useHardware,
-  });
+  }) =>
+      _call(() => _api.createKey(keyAlias, _algorithm(algorithm), useHardware));
 
   @override
-  Future<bool> deleteKey(String keyAlias) async {
-    final result = await methodChannel.invokeMethod<bool>('deleteKey', {
-      'keyAlias': keyAlias,
-    });
-    return result ?? false;
-  }
+  Future<bool> deleteKey(String keyAlias) =>
+      _call(() => _api.deleteKey(keyAlias));
 
   @override
-  Future<bool> keyExists(String keyAlias) async {
-    final result = await methodChannel.invokeMethod<bool>('keyExists', {
-      'keyAlias': keyAlias,
-    });
-    return result ?? false;
-  }
+  Future<bool> keyExists(String keyAlias) =>
+      _call(() => _api.keyExists(keyAlias));
 
   @override
   Future<String> exportPublicKey(String keyAlias) =>
-      _invoke<String>('exportPublicKey', {'keyAlias': keyAlias});
+      _call(() => _api.exportPublicKey(keyAlias));
 
   @override
   Future<void> importKey({
     required String keyAlias,
     required String privateKeyPem,
     required String certificateChainPem,
-  }) => methodChannel.invokeMethod<void>('importKey', {
-    'keyAlias': keyAlias,
-    'privateKeyPem': privateKeyPem,
-    'certificateChainPem': certificateChainPem,
-  });
+  }) =>
+      _call(() => _api.importKey(keyAlias, privateKeyPem, certificateChainPem));
 
   @override
   Future<String> createCSR({
     required String keyAlias,
-    required String commonName,
-    String? organization,
-    String? organizationalUnit,
-    String? country,
-    String? state,
-    String? locality,
-  }) => _invoke<String>('createCSR', {
-    'keyAlias': keyAlias,
-    'commonName': commonName,
-    'organization': organization,
-    'organizationalUnit': organizationalUnit,
-    'country': country,
-    'state': state,
-    'locality': locality,
-  });
+    required CertificateConfig config,
+  }) => _call(() => _api.createCSR(keyAlias, _certificateConfig(config)));
 
   @override
-  Future<Map<String, dynamic>> enrollHardwareKey({
+  Future<HardwareKeyEnrollment> enrollHardwareKey({
     required String keyAlias,
     required String signingServerUrl,
     String? bearerToken,
@@ -693,25 +642,44 @@ class MethodChannelC2pa extends C2paPlatform {
     String? organization,
     bool useStrongBox = false,
   }) async {
-    final result = await _invoke<Map<dynamic, dynamic>>('enrollHardwareKey', {
-      'keyAlias': keyAlias,
-      'signingServerUrl': signingServerUrl,
-      'bearerToken': bearerToken,
-      'commonName': commonName,
-      'organization': organization,
-      'useStrongBox': useStrongBox,
-    });
-    return Map<String, dynamic>.from(result);
+    final result = await _call(
+      () => _api.enrollHardwareKey(
+        keyAlias,
+        signingServerUrl,
+        bearerToken,
+        commonName,
+        organization,
+        useStrongBox,
+      ),
+    );
+    return HardwareKeyEnrollment(
+      keyAlias: result.keyAlias,
+      certificateChainPem: result.certificateChainPem,
+    );
   }
 
   @override
   Future<String> createSelfSignedCertificateChain({
     required String keyAlias,
-    Map<String, dynamic>? config,
-  }) => _invoke<String>('createSelfSignedCertificateChain', {
-    'keyAlias': keyAlias,
-    'config': config,
-  });
+    CertificateConfig? config,
+  }) => _call(
+    () => _api.createSelfSignedCertificateChain(
+      keyAlias,
+      config == null ? null : _certificateConfig(config),
+    ),
+  );
+
+  static CertificateConfigMessage _certificateConfig(CertificateConfig c) =>
+      CertificateConfigMessage(
+        commonName: c.commonName,
+        organization: c.organization,
+        organizationalUnit: c.organizationalUnit,
+        country: c.country,
+        state: c.state,
+        locality: c.locality,
+        emailAddress: c.email,
+        validityDays: c.validityDays,
+      );
 
   // ===========================================================================
   // Settings
@@ -719,36 +687,25 @@ class MethodChannelC2pa extends C2paPlatform {
 
   @override
   Future<void> loadSettings(String settings, String format) =>
-      methodChannel.invokeMethod<void>('loadSettings', {
-        'settings': settings,
-        'format': format,
-      });
+      _call(() => _api.loadSettings(settings, format));
 
   @override
-  Future<int> createSettings() => _invoke<int>('createSettings');
+  Future<int> createSettings() => _call(_api.createSettings);
 
   @override
   Future<void> settingsUpdateFromString(
     int handle,
     String settings,
     String format,
-  ) => methodChannel.invokeMethod<void>('settingsUpdateFromString', {
-    'handle': handle,
-    'settings': settings,
-    'format': format,
-  });
+  ) => _call(() => _api.settingsUpdateFromString(handle, settings, format));
 
   @override
   Future<void> settingsSetValue(int handle, String path, Object value) =>
-      methodChannel.invokeMethod<void>('settingsSetValue', {
-        'handle': handle,
-        'path': path,
-        'value': jsonEncode(value),
-      });
+      _call(() => _api.settingsSetValue(handle, path, jsonEncode(value)));
 
   @override
   Future<void> settingsDispose(int handle) =>
-      methodChannel.invokeMethod<void>('settingsDispose', {'handle': handle});
+      _call(() => _api.settingsDispose(handle));
 
   // ===========================================================================
   // Contexts
@@ -762,17 +719,23 @@ class MethodChannelC2pa extends C2paPlatform {
     C2paHttpResolver? httpResolver,
   }) async {
     final ids = <String>[];
-    final signerMap = signer == null ? null : _serializeSigner(signer, ids);
+    final message = signer == null ? null : _signerMessage(signer, ids);
     if (onProgress != null || httpResolver is CallbackHttpResolver) {
-      _ensureHandlerRegistered();
+      _ensureFlutterApi();
     }
     try {
-      final handle = await _invoke<int>('createContext', {
-        'settingsHandle': settingsHandle,
-        'signer': signerMap,
-        'progress': onProgress != null,
-        'httpResolver': httpResolver?.mode,
-      });
+      final handle = await _call(
+        () => _api.createContext(
+          settingsHandle,
+          message,
+          onProgress != null,
+          switch (httpResolver) {
+            null => null,
+            NativeHttpResolver() => HttpResolverModeMessage.native,
+            CallbackHttpResolver() => HttpResolverModeMessage.callback,
+          },
+        ),
+      );
       _contextCallbacks[handle] = _ContextCallbacks(
         onProgress: onProgress,
         httpResolver: httpResolver,
@@ -787,14 +750,12 @@ class MethodChannelC2pa extends C2paPlatform {
 
   @override
   Future<void> contextCancel(int handle) =>
-      methodChannel.invokeMethod<void>('contextCancel', {'handle': handle});
+      _call(() => _api.contextCancel(handle));
 
   @override
   Future<void> contextDispose(int handle) async {
     try {
-      await methodChannel.invokeMethod<void>('contextDispose', {
-        'handle': handle,
-      });
+      await _call(() => _api.contextDispose(handle));
     } finally {
       final callbacks = _contextCallbacks.remove(handle);
       callbacks?.signCallbackIds.forEach(_signCallbacks.remove);
@@ -802,26 +763,26 @@ class MethodChannelC2pa extends C2paPlatform {
   }
 }
 
-/// Releases the native builder of a [MethodChannelManifestBuilder] that was
-/// garbage collected without [MethodChannelManifestBuilder.dispose].
+/// Releases the native builder of a [PigeonManifestBuilder] that was garbage
+/// collected without [PigeonManifestBuilder.dispose].
 final Finalizer<int> _builderFinalizer = Finalizer<int>(
   (handle) => unawaited(
     C2paPlatform.instance.builderDispose(handle).catchError((Object _) {}),
   ),
 );
 
-/// Method channel implementation of [ManifestBuilder].
+/// [ManifestBuilder] over [PigeonC2pa].
 ///
 /// Calls run one after another in the order they were made, whether or not
 /// the caller awaits each one, so a [sign] issued straight after an
 /// un-awaited [addIngredient] still sees the ingredient.
-class MethodChannelManifestBuilder implements ManifestBuilder {
-  final MethodChannelC2pa _platform;
+class PigeonManifestBuilder implements ManifestBuilder {
+  final PigeonC2pa _platform;
   final int _handle;
   bool _disposed = false;
   Future<void> _tail = Future<void>.value();
 
-  MethodChannelManifestBuilder(this._platform, this._handle) {
+  PigeonManifestBuilder(this._platform, this._handle) {
     _builderFinalizer.attach(this, _handle, detach: this);
   }
 

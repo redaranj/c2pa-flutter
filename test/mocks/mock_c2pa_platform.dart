@@ -810,7 +810,7 @@ class MockC2paPlatform extends C2paPlatform with MockPlatformInterfaceMixin {
       'settingsHandle': settingsHandle,
       'signerType': signer?.runtimeType.toString(),
       'progress': onProgress != null,
-      'httpResolver': httpResolver?.mode,
+      'httpResolver': httpResolver?.runtimeType.toString(),
     });
     _checkError();
 
@@ -883,11 +883,11 @@ class MockC2paPlatform extends C2paPlatform with MockPlatformInterfaceMixin {
   @override
   Future<String> createSelfSignedCertificateChain({
     required String keyAlias,
-    Map<String, dynamic>? config,
+    CertificateConfig? config,
   }) async {
     _recordCall('createSelfSignedCertificateChain', {
       'keyAlias': keyAlias,
-      'config': config,
+      'config': config?.toMap(),
     });
     _checkError();
     return mockCertificateChain;

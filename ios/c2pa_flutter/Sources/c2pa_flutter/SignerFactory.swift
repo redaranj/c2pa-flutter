@@ -15,54 +15,67 @@ import Flutter
 import Foundation
 import Security
 
-/// Calls Dart handlers on the main thread from a background thread and waits
-/// for the answer. Callback signers and HTTP resolvers run synchronously on
-/// the thread performing a C2PA operation, so they use this to reach Dart.
+/// Calls Dart through the Pigeon `C2paFlutterApi` on the main thread. Callback
+/// signers and HTTP resolvers run synchronously on the thread performing a
+/// C2PA operation, so they wait here for Dart's answer.
 final class DartBridge: @unchecked Sendable {
-    /// Held strongly: nothing else owns the channel created in `register`,
-    /// so a weak reference is released as soon as registration returns.
-    var channel: FlutterMethodChannel?
+    /// Set once in `register`, before any call can arrive.
+    var api: C2paFlutterApi?
 
-    private final class Box: @unchecked Sendable {
-        var value: Any?
-        var error: Error?
+    private final class Box<T>: @unchecked Sendable {
+        var result: Result<T, PigeonError>?
     }
 
-    func invokeBlocking(_ method: String, _ arguments: Any?) throws -> Any? {
+    func sign(callbackId: String, data: Data) throws -> Data {
+        try call("sign") { api, done in
+            api.sign(callbackId: callbackId, data: FlutterStandardTypedData(bytes: data)) { done($0) }
+        }.data
+    }
+
+    func resolveHttp(contextHandle: Int64, request: HttpRequestMessage) throws -> HttpResponseMessage {
+        try call("resolveHttp") { api, done in
+            api.resolveHttp(contextHandle: contextHandle, request: request) { done($0) }
+        }
+    }
+
+    /// Fire-and-forget progress notification.
+    func progress(contextHandle: Int64, phase: String, step: Int64, total: Int64) {
+        DispatchQueue.main.async { [weak self] in
+            self?.api?.progress(contextHandle: contextHandle, phase: phase, step: step, total: total) { _ in }
+        }
+    }
+
+    private func call<T>(
+        _ name: String,
+        _ invoke: @escaping (C2paFlutterApi, @escaping (Result<T, PigeonError>) -> Void) -> Void
+    ) throws -> T {
         if Thread.isMainThread {
-            throw C2PAError.api("\(method) must not be invoked on the main thread")
+            throw C2PAError.api("\(name) must not be called on the main thread")
         }
-        guard let channel = channel else {
-            throw C2PAError.api("Method channel not available")
+        guard let api = api else {
+            throw C2PAError.api("\(name): the Flutter engine is detached")
         }
-        let box = Box()
+        let box = Box<T>()
         let semaphore = DispatchSemaphore(value: 0)
         DispatchQueue.main.async {
-            channel.invokeMethod(method, arguments: arguments) { response in
-                if let error = response as? FlutterError {
-                    box.error = C2PAError.api("\(method) failed in Dart: \(error.message ?? error.code)")
-                } else if let marker = response as? NSObject, marker === FlutterMethodNotImplemented {
-                    box.error = C2PAError.api("\(method) has no Dart handler")
-                } else {
-                    box.value = response
-                }
+            invoke(api) { result in
+                box.result = result
                 semaphore.signal()
             }
         }
         semaphore.wait()
-        if let error = box.error { throw error }
-        return box.value
-    }
-
-    /// Fire-and-forget notification to Dart.
-    func notify(_ method: String, _ arguments: Any?) {
-        DispatchQueue.main.async { [weak self] in
-            self?.channel?.invokeMethod(method, arguments: arguments)
+        switch box.result {
+        case .success(let value)?:
+            return value
+        case .failure(let error)?:
+            throw C2PAError.api("\(name) failed in Dart: \(error.message ?? error.code)")
+        case nil:
+            throw C2PAError.api("\(name) returned no result")
         }
     }
 }
 
-/// Builds c2pa-swift `Signer`s from the maps produced by `C2paSigner.toMap()`.
+/// Builds c2pa-swift `Signer`s from the signer messages Dart sends.
 ///
 /// Call only from the plugin's worker queue: remote signers wait for a
 /// network round trip and callback signers wait for Dart.
@@ -73,78 +86,70 @@ final class SignerFactory {
         self.bridge = bridge
     }
 
-    func isSettingsSigner(_ map: [String: Any]) -> Bool {
-        map["type"] as? String == "settings"
-    }
-
-    func create(_ map: [String: Any]) throws -> Signer {
-        let args = Args(map: map)
-        let type: String = args.opt("type") ?? "pem"
-        switch type {
-        case "pem":
+    func create(_ message: SignerMessage) throws -> Signer {
+        switch message {
+        case let pem as PemSignerMessage:
             return try Signer(
-                certsPEM: try args.req("certificatePem"),
-                privateKeyPEM: try args.req("privateKeyPem"),
-                algorithm: try parseAlgorithm(try args.req("algorithm")),
-                tsa: tsaURL(args)
+                certsPEM: pem.certificatePem,
+                privateKeyPEM: pem.privateKeyPem,
+                algorithm: pem.algorithm.sdk,
+                tsa: tsaURL(pem.tsaUrl)
             )
-        case "keystore":
+        case let keystore as KeystoreSignerMessage:
             return try Signer(
-                algorithm: try parseAlgorithm(try args.req("algorithm")),
-                certificateChainPEM: try args.req("certificateChainPem"),
-                tsa: tsaURL(args),
-                keychainKeyTag: try args.req("keyAlias")
+                algorithm: keystore.algorithm.sdk,
+                certificateChainPEM: keystore.certificateChainPem,
+                tsa: tsaURL(keystore.tsaUrl),
+                keychainKeyTag: keystore.keyAlias
             )
-        case "hardware":
+        case let hardware as HardwareSignerMessage:
             var accessControl: SecAccessControlCreateFlags = [.privateKeyUsage]
-            if args.opt("requireUserAuthentication") ?? false {
+            if hardware.requireUserAuthentication {
                 accessControl.insert(.biometryCurrentSet)
             }
             return try Signer(
                 algorithm: .es256,
-                certificateChainPEM: try args.req("certificateChainPem"),
-                tsa: tsaURL(args),
+                certificateChainPEM: hardware.certificateChainPem,
+                tsa: tsaURL(hardware.tsaUrl),
                 secureEnclaveConfig: SecureEnclaveSignerConfig(
-                    keyTag: try args.req("keyAlias"),
+                    keyTag: hardware.keyAlias,
                     accessControl: accessControl
                 )
             )
-        case "callback":
-            return try createCallback(args)
-        case "remote":
-            return try createRemote(args)
-        case "cawgIdentity":
-            return try createCawgIdentity(args)
-        case "settings":
+        case let callback as CallbackSignerMessage:
+            return try createCallback(callback)
+        case let remote as RemoteSignerMessage:
+            return try createRemote(remote)
+        case let cawg as CawgIdentitySignerMessage:
+            return try Signer.withCawgIdentity(
+                try create(cawg.claimSigner),
+                identity: try create(cawg.identitySigner),
+                referencedAssertions: cawg.referencedAssertions,
+                roles: cawg.roles
+            )
+        case is SettingsSignerMessage:
             throw PluginError.invalidArgument(
                 "A SettingsSigner is not a standalone signer. Put the signer in the settings of a " +
                     "C2paContext and sign without passing a signer, or use C2pa.signBytes/signFile."
             )
         default:
-            throw PluginError.invalidArgument("Unknown signer type: \(type)")
+            throw PluginError.invalidArgument("Unknown signer type: \(type(of: message))")
         }
     }
 
-    private func tsaURL(_ args: Args) -> URL? {
-        (args.opt("tsaUrl") as String?).flatMap(URL.init(string:))
+    private func tsaURL(_ value: String?) -> URL? {
+        value.flatMap(URL.init(string:))
     }
 
-    private func createCallback(_ args: Args) throws -> Signer {
-        let callbackId: String = try args.req("callbackId")
+    private func createCallback(_ message: CallbackSignerMessage) throws -> Signer {
+        let callbackId = message.callbackId
         let bridge = self.bridge
         return try Signer(
-            algorithm: try parseAlgorithm(try args.req("algorithm")),
-            certificateChainPEM: try args.req("certificateChainPem"),
-            tsa: tsaURL(args)
+            algorithm: message.algorithm.sdk,
+            certificateChainPEM: message.certificateChainPem,
+            tsa: tsaURL(message.tsaUrl)
         ) { @Sendable dataToSign in
-            let response = try bridge.invokeBlocking(
-                "signCallback",
-                ["callbackId": callbackId, "data": FlutterStandardTypedData(bytes: dataToSign)]
-            )
-            guard let signature = response as? FlutterStandardTypedData else {
-                throw C2PAError.api("Signing callback returned no signature")
-            }
-            return signature.data
+            try bridge.sign(callbackId: callbackId, data: dataToSign)
         }
     }
 
@@ -152,17 +157,14 @@ final class SignerFactory {
         var result: Result<Signer, Error>?
     }
 
-    private func createRemote(_ args: Args) throws -> Signer {
-        let urlString: String = try args.req("configurationUrl")
-        guard let endpoint = URL(string: urlString) else {
-            throw PluginError.invalidArgument("Invalid configurationUrl: \(urlString)")
+    private func createRemote(_ message: RemoteSignerMessage) throws -> Signer {
+        guard let endpoint = URL(string: message.configurationUrl) else {
+            throw PluginError.invalidArgument("Invalid configurationUrl: \(message.configurationUrl)")
         }
-        let headers = (args.opt("customHeaders") as [String: Any]?)?
-            .mapValues { "\($0)" } ?? [:]
         let webServiceSigner = WebServiceSigner(
             configurationEndpoint: endpoint,
-            bearerToken: args.opt("bearerToken"),
-            headers: headers
+            bearerToken: message.bearerToken,
+            headers: message.customHeaders
         )
         let box = SignerBox()
         let semaphore = DispatchSemaphore(value: 0)
@@ -179,18 +181,5 @@ final class SignerFactory {
             throw C2PAError.api("Remote signer creation failed")
         }
         return try result.get()
-    }
-
-    private func createCawgIdentity(_ args: Args) throws -> Signer {
-        let claimMap: [String: Any] = try args.req("claimSigner")
-        let identityMap: [String: Any] = try args.req("identitySigner")
-        let claim = try create(claimMap)
-        let identity = try create(identityMap)
-        return try Signer.withCawgIdentity(
-            claim,
-            identity: identity,
-            referencedAssertions: args.opt("referencedAssertions") ?? [],
-            roles: args.opt("roles") ?? []
-        )
     }
 }

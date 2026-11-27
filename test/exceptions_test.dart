@@ -11,7 +11,6 @@ each license.
 */
 
 import 'package:c2pa_flutter/c2pa.dart';
-import 'package:c2pa_flutter/c2pa_method_channel.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -74,46 +73,6 @@ void main() {
         PlatformException(code: 'ERROR'),
       );
       expect(e.message, 'ERROR');
-    });
-  });
-
-  group('MethodChannelC2pa errors', () {
-    final platform = MethodChannelC2pa();
-    const channel = MethodChannel('org.guardianproject.c2pa');
-
-    tearDown(() {
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(channel, null);
-    });
-
-    test('native failures arrive as C2paException', () async {
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(channel, (call) async {
-            throw PlatformException(
-              code: 'C2PA_ERROR',
-              message: 'ManifestNotFound: no JUMBF data found',
-            );
-          });
-
-      await expectLater(
-        platform.readFile('/unsigned.jpg'),
-        throwsA(isA<C2paManifestNotFoundException>()),
-      );
-    });
-
-    test('settings values are sent JSON-encoded', () async {
-      final sent = <Object?>[];
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(channel, (call) async {
-            sent.add((call.arguments as Map<dynamic, dynamic>)['value']);
-            return null;
-          });
-
-      await platform.settingsSetValue(1, 'verify.verify_trust', false);
-      await platform.settingsSetValue(1, 'signer.local.alg', 'es256');
-      await platform.settingsSetValue(1, 'builder.labels', ['a', 'b']);
-
-      expect(sent, ['false', '"es256"', '["a","b"]']);
     });
   });
 

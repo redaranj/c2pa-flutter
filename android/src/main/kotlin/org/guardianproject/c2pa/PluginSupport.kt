@@ -12,7 +12,6 @@ each license.
 
 package org.guardianproject.c2pa
 
-import io.flutter.plugin.common.MethodCall
 import org.contentauth.c2pa.BuilderIntent
 import org.contentauth.c2pa.DigitalSourceType
 import org.contentauth.c2pa.FileStream
@@ -57,17 +56,6 @@ class HandleRegistry<T> {
     }
 }
 
-fun <T> MethodCall.req(name: String): T =
-    argument<T>(name) ?: throw invalidArgument("$name is required")
-
-fun <T> MethodCall.opt(name: String): T? = argument<T>(name)
-
-/** Reads an integral argument that may arrive as Int or Long. */
-fun MethodCall.reqLong(name: String): Long =
-    (argument<Any>(name) as? Number)?.toLong() ?: throw invalidArgument("$name is required")
-
-fun MethodCall.optInt(name: String): Int? = (argument<Any>(name) as? Number)?.toInt()
-
 /**
  * Opens an existing file for reading. Unlike the FileStream default, a missing
  * file is an error rather than a silently created empty file.
@@ -107,26 +95,28 @@ fun mimeTypeForPath(path: String): String =
         else -> "application/octet-stream"
     }
 
-fun parseAlgorithm(value: String): SigningAlgorithm =
-    when (value.lowercase()) {
-        "es256" -> SigningAlgorithm.ES256
-        "es384" -> SigningAlgorithm.ES384
-        "es512" -> SigningAlgorithm.ES512
-        "ps256" -> SigningAlgorithm.PS256
-        "ps384" -> SigningAlgorithm.PS384
-        "ps512" -> SigningAlgorithm.PS512
-        "ed25519" -> SigningAlgorithm.ED25519
-        else -> throw invalidArgument("Unknown signing algorithm: $value")
+fun SigningAlgorithmMessage.toSdk(): SigningAlgorithm =
+    when (this) {
+        SigningAlgorithmMessage.ES256 -> SigningAlgorithm.ES256
+        SigningAlgorithmMessage.ES384 -> SigningAlgorithm.ES384
+        SigningAlgorithmMessage.ES512 -> SigningAlgorithm.ES512
+        SigningAlgorithmMessage.PS256 -> SigningAlgorithm.PS256
+        SigningAlgorithmMessage.PS384 -> SigningAlgorithm.PS384
+        SigningAlgorithmMessage.PS512 -> SigningAlgorithm.PS512
+        SigningAlgorithmMessage.ED25519 -> SigningAlgorithm.ED25519
     }
 
-fun parseIntent(intent: String, digitalSourceType: String?): BuilderIntent =
-    when (intent) {
-        "create" -> BuilderIntent.Create(
+/** The algorithm's name as Dart spells it, for messages. */
+val SigningAlgorithmMessage.dartName: String
+    get() = name.lowercase()
+
+fun ManifestIntentMessage.toSdk(digitalSourceType: String?): BuilderIntent =
+    when (this) {
+        ManifestIntentMessage.CREATE -> BuilderIntent.Create(
             digitalSourceType?.let { parseDigitalSourceType(it) } ?: DigitalSourceType.DIGITAL_CAPTURE,
         )
-        "edit" -> BuilderIntent.Edit
-        "update" -> BuilderIntent.Update
-        else -> throw invalidArgument("Unknown intent: $intent")
+        ManifestIntentMessage.EDIT -> BuilderIntent.Edit
+        ManifestIntentMessage.UPDATE -> BuilderIntent.Update
     }
 
 fun parseDigitalSourceType(type: String): DigitalSourceType =
@@ -153,11 +143,11 @@ fun parseDigitalSourceType(type: String): DigitalSourceType =
         else -> throw invalidArgument("Unknown digital source type: $type")
     }
 
-fun hashTypeName(type: HashType): String =
-    when (type) {
-        HashType.DATA_HASH -> "dataHash"
-        HashType.BMFF_HASH -> "bmffHash"
-        HashType.BOX_HASH -> "boxHash"
+fun HashType.toMessage(): HashTypeMessage =
+    when (this) {
+        HashType.DATA_HASH -> HashTypeMessage.DATA_HASH
+        HashType.BMFF_HASH -> HashTypeMessage.BMFF_HASH
+        HashType.BOX_HASH -> HashTypeMessage.BOX_HASH
     }
 
 fun progressPhaseName(phase: ProgressPhase): String =

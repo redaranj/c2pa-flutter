@@ -117,17 +117,11 @@ class C2paHttpResponse {
 /// How a [C2paContext] performs the HTTP requests the SDK makes.
 sealed class C2paHttpResolver {
   const C2paHttpResolver();
-
-  /// The value sent to the native side as `httpResolver`.
-  String get mode;
 }
 
 /// Uses the platform HTTP client: `URLSession` on iOS, OkHttp on Android.
 class NativeHttpResolver extends C2paHttpResolver {
   const NativeHttpResolver();
-
-  @override
-  String get mode => 'native';
 }
 
 /// Routes every SDK HTTP request through a Dart callback, for example to add
@@ -139,9 +133,6 @@ class CallbackHttpResolver extends C2paHttpResolver {
   final Future<C2paHttpResponse> Function(C2paHttpRequest request) resolve;
 
   const CallbackHttpResolver(this.resolve);
-
-  @override
-  String get mode => 'callback';
 }
 
 /// How a format binds the manifest to the asset's bytes.
