@@ -70,8 +70,13 @@ final class KeyManagement {
     }
 
     func deleteKey(_ args: Args) throws -> Bool {
-        let keyAlias: String = try args.req("keyAlias")
-        if Signer.deleteSecureEnclaveKey(keyTag: keyAlias) { return true }
+        try deleteKey(try args.req("keyAlias") as String)
+    }
+
+    /// Deletes every key tagged [keyAlias], in the keychain or the Secure
+    /// Enclave. c2pa-swift's `deleteSecureEnclaveKey` reports success when
+    /// nothing matched, so it cannot tell whether a keychain key remains.
+    private func deleteKey(_ keyAlias: String) -> Bool {
         let query: [String: Any] = [
             kSecClass as String: kSecClassKey,
             kSecAttrApplicationTag as String: keyAlias,
@@ -206,7 +211,7 @@ final class KeyManagement {
         let commonName: String = args.opt("commonName") ?? "C2PA Hardware Key"
         let organization: String = args.opt("organization") ?? "C2PA App"
 
-        _ = Signer.deleteSecureEnclaveKey(keyTag: keyAlias)
+        _ = deleteKey(keyAlias)
         if isHardwareSigningAvailable() {
             let config = SecureEnclaveSignerConfig(keyTag: keyAlias, accessControl: [.privateKeyUsage])
             _ = try Signer.createSecureEnclaveKey(config: config)

@@ -846,7 +846,9 @@ class ManifestInfo {
   /// Format/MIME type
   final String? format;
 
-  /// Claim generator string
+  /// The claim generator: the `claim_generator` string of a v1 claim, or
+  /// the entries of `claim_generator_info` (`name/version`, space separated)
+  /// of a v2 claim.
   final String? claimGenerator;
 
   /// Instance ID
@@ -881,7 +883,9 @@ class ManifestInfo {
       label: map['label'] as String? ?? '',
       title: map['title'] as String?,
       format: map['format'] as String?,
-      claimGenerator: map['claim_generator'] as String?,
+      claimGenerator:
+          map['claim_generator'] as String? ??
+          _claimGeneratorFromInfo(map['claim_generator_info']),
       instanceId: map['instance_id'] as String?,
       signature: map['signature_info'] != null
           ? SignatureInfo.fromMap(map['signature_info'] as Map<String, dynamic>)
@@ -899,6 +903,18 @@ class ManifestInfo {
       thumbnailUri: _thumbnailIdentifier(map['thumbnail']),
     );
   }
+}
+
+String? _claimGeneratorFromInfo(Object? info) {
+  if (info is! List || info.isEmpty) return null;
+  final parts = [
+    for (final entry in info)
+      if (entry is Map && entry['name'] is String)
+        entry['version'] is String
+            ? '${entry['name']}/${entry['version']}'
+            : entry['name'] as String,
+  ];
+  return parts.isEmpty ? null : parts.join(' ');
 }
 
 /// Complete manifest store with all manifests and validation info
@@ -1359,7 +1375,7 @@ abstract class ManifestBuilder {
 /// ```dart
 /// final settings = await C2paSettings.create();
 /// await settings.updateFromString('{"version": 1, "verify": {"verify_trust": false}}', 'json');
-/// await settings.setValue('verify.verify_after_sign', 'true');
+/// await settings.setValue('verify.verify_after_sign', true);
 ///
 /// // Use with context or builder
 /// final context = await C2paContext.fromSettings(settings);
@@ -1431,7 +1447,8 @@ class C2paSettings {
 
   /// Set an individual setting value using dot notation.
   ///
-  /// [value] is any JSON value: a bool, number, string, list or map.
+  /// [value] is a JSON value: a bool, number, string or list. Set objects
+  /// with [updateFromString]; c2pa-android rejects object values here.
   ///
   /// ```dart
   /// await settings.setValue('verify.verify_trust', false);

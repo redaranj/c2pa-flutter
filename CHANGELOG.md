@@ -55,6 +55,8 @@ Moves to c2pa-swift 0.1.0 and c2pa-android 0.1.2 (c2pa-rs 0.92). Both SDKs now s
 * iOS: builders created without a context, `loadSettings` and `SettingsSigner` apply the same default `created_assertion_labels` as Android, so a manifest records the same assertions as created on both platforms.
 * iOS: `exportPublicKey` returns a SubjectPublicKeyInfo PEM like Android, not the bare EC point.
 * iOS: keychain keys use the tag form c2pa-swift's keychain signer looks up.
+* iOS: `deleteKey` deletes keychain keys. It stopped at c2pa-swift's `deleteSecureEnclaveKey`, which reports success even when no Secure Enclave key matched.
+* `ManifestInfo.claimGenerator` reads `claim_generator_info` for v2 claims; it was null for every manifest c2pa-rs 0.92 writes.
 
 ## 0.0.4
 

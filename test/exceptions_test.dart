@@ -175,6 +175,23 @@ void main() {
       expect(ingredient.relationship, Relationship.parentOf);
     });
 
+    test('the claim generator falls back to claim_generator_info', () {
+      expect(
+        ManifestInfo.fromMap({
+          'claim_generator_info': [
+            {'name': 'app', 'version': '1.0'},
+            {'name': 'c2pa-rs'},
+          ],
+        }).claimGenerator,
+        'app/1.0 c2pa-rs',
+      );
+      expect(
+        ManifestInfo.fromMap({'claim_generator': 'legacy/2'}).claimGenerator,
+        'legacy/2',
+      );
+      expect(ManifestInfo.fromMap(<String, dynamic>{}).claimGenerator, isNull);
+    });
+
     test('an unknown signature algorithm parses as null', () {
       expect(
         SignatureInfo.fromMap({'alg': 'Es384'}).algorithm,
