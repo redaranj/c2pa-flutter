@@ -19,6 +19,7 @@ It wraps the official native SDKs, [c2pa-swift](https://github.com/contentauth/c
 
 | Platform | Minimum | Build requirement |
 |----------|---------|-------------------|
+| Flutter  | 3.47    | Dart 3.13; CI runs Flutter 3.47.9 |
 | iOS      | 16.0    | Xcode 26.4+ (c2pa-swift declares Swift tools 6.3); Swift Package Manager |
 | Android  | API 28  | compileSdk 36 |
 
@@ -31,7 +32,10 @@ dependencies:
   c2pa_flutter:
     git:
       url: https://github.com/guardianproject/c2pa-flutter.git
+      ref: <commit>  # pin a commit so builds are reproducible
 ```
+
+The package is not on pub.dev. The `c2pa_flutter` name there belongs to an unrelated package.
 
 Android apps also need JitPack in their repositories, because c2pa-android is published there:
 
@@ -151,6 +155,24 @@ final manifest = await builder.signEmbeddable('image/jpeg'); // same size as the
 
 `hashType()` tells you which workflow a format uses. `setFixedSizeMerkle()` and `hashMdatBytes()` handle fragmented BMFF. `C2pa.composeManifest()` frames raw `application/c2pa` bytes for a format.
 
+### Keys
+
+Keys live in the Android KeyStore or the iOS keychain, and the hardware variants in StrongBox or the Secure Enclave:
+
+```dart
+await c2pa.createKey(keyAlias: 'signing-key', algorithm: SigningAlgorithm.es256);
+final csr = await c2pa.createCSR(keyAlias: 'signing-key', commonName: 'My App');
+// ... have a CA issue a certificate chain for the CSR ...
+
+final signer = KeystoreSigner(
+  algorithm: SigningAlgorithm.es256,
+  certificateChainPem: certificateChainPem,
+  keyAlias: 'signing-key',
+);
+```
+
+`importKey` stores an existing PEM key, `exportPublicKey` returns a PEM `SubjectPublicKeyInfo`, and `enrollHardwareKey` creates a hardware key, posts its CSR to a signing server and returns the issued chain.
+
 ### Errors
 
 Every failure is a `C2paException`, a sealed class whose cases you can match:
@@ -158,6 +180,8 @@ Every failure is a `C2paException`, a sealed class whose cases you can match:
 ```dart
 try {
   final store = await c2pa.readManifestFromFile(path);
+  // trusted needs the signing certificate to chain to a trust anchor in
+  // the settings (trust.trust_anchors, with verify.verify_trust on).
   print(store.validationStatus); // trusted, valid, invalid or unknown
 } on C2paManifestNotFoundException {
   // No content credentials.
@@ -178,13 +202,27 @@ try {
 | `createSelfSignedCertificateChain` | `NOT_IMPLEMENTED_ANDROID` | yes |
 | `importKey` | EC and RSA, into AndroidKeyStore | EC P-256/384/521, into the keychain |
 | `createKey` | es256/es384/es512 software keys; hardware (StrongBox) es256 | es256/es384/es512 keychain keys; hardware (Secure Enclave) es256, devices only |
+| `HardwareSigner` and hardware `createKey` | needs StrongBox | needs the Secure Enclave, so neither works in the simulator (`createKey` throws `NOT_AVAILABLE`) |
+| `C2paSettings.setValue` with a map value | rejected by c2pa-rs; use `updateFromString` | accepted |
 | Digital source types `empty`, `trainedAlgorithmicData`, `computationalCapture` | via the SDK enum | recorded through an explicit `c2pa.created` action, since the c2pa-swift enum lacks them |
 
 `getSupportedReadMimeTypes()` and `getSupportedSignMimeTypes()` return the lists reported by each native SDK.
 
 ## Example
 
-See the [example](example/) directory for a sample app with camera capture, signing and verification.
+See the [example](example/) directory for a sample app with camera capture, signing and verification. It also hosts the integration tests.
+
+## Development
+
+The repository layout:
+
+- `lib/c2pa.dart` is the public API, and `lib/c2pa_pigeon.dart` implements it over the platform channel.
+- `pigeons/c2pa_api.dart` defines the interface between Dart and the native plugins. [Pigeon](https://pub.dev/packages/pigeon) generates `lib/src/c2pa_api.g.dart`, `android/.../C2paApi.g.kt` and `ios/.../C2paApi.g.swift` from it. Edit the definition, run `make pigeon`, and never edit the `.g` files by hand. CI fails when they drift from the definition.
+- `android/` and `ios/c2pa_flutter/` implement the generated host API on c2pa-android and c2pa-swift. Each runs SDK calls on one serial worker, in the order Dart made them.
+- `test/` holds the Dart unit tests: `make test-unit`. They run against a mock platform and a fake host API, so they need no device.
+- `example/integration_test/` runs against the real SDKs on a device or emulator: `make test-integration-ios` or `make test-integration-android`. CI runs every file on an iOS simulator and an Android emulator.
+
+`make lint` runs the analyzer as CI does, and `make format-check` checks formatting (CI checks `lib/` and `test/`). `make help` lists the other targets.
 
 ## License
 

@@ -43,7 +43,7 @@ enum C2paProgressPhase {
   }
 }
 
-/// A progress report from a C2PA operation running on a [C2paContext].
+/// A progress report from a C2PA operation running on a `C2paContext`.
 ///
 /// [step] counts up from 1 within a phase. [total] is 0 when the amount of
 /// work is unknown, 1 for a single-shot phase, and the number of steps
@@ -114,7 +114,7 @@ class C2paHttpResponse {
   Map<String, dynamic> toMap() => {'status': status, 'body': body};
 }
 
-/// How a [C2paContext] performs the HTTP requests the SDK makes.
+/// How a `C2paContext` performs the HTTP requests the SDK makes.
 sealed class C2paHttpResolver {
   const C2paHttpResolver();
 }

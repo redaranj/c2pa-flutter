@@ -15,16 +15,20 @@ Moves to c2pa-swift 0.1.0 and c2pa-android 0.1.2 (c2pa-rs 0.92). Both SDKs now s
 * Every failure is now a sealed `C2paException` (`C2paManifestNotFoundException`, `C2paCancelledException`, `C2paSdkException`, `C2paInvalidArgumentException`, `C2paUnsupportedException`, `C2paKeyException`, `C2paPlatformException`) instead of a `PlatformException`.
 * Reading an asset without a manifest throws `C2paManifestNotFoundException`, as both SDKs do, instead of being documented as returning null. `readFile`, `readBytes`, `readManifestFromFile`, `readManifestFromBytes` and `extractResource` return non-nullable types.
 * `ManifestBuilder.setIntent`, `setNoEmbed`, `setRemoteUrl` and `addAction` return futures. `dispose()` on builders, settings and contexts returns a future.
-* `C2paSettings.setValue` takes any JSON value (`true`, `42`, `'es256'`, a map) instead of a string.
+* `C2paSettings.setValue` takes a JSON value (`true`, `42`, `'es256'`, a list) instead of a string. Set objects with `updateFromString`; c2pa-android rejects them here.
 * `enrollHardwareKey` returns a `HardwareKeyEnrollment` instead of a map.
 * `ValidationStatus` gains `trusted`, read from the SDK's `validation_state`.
 * `SignatureInfo.algorithm` is null for an algorithm the plugin does not know, instead of `es256`.
 * `createKey` honours `algorithm` (P-256, P-384 or P-521) and rejects anything else. Hardware keys require `es256`.
 * Removed `C2pa.readManifestFromFileWithContext`. Pass the context in `ReaderOptions`.
 * The package needs Dart 3.13 and Flutter 3.47 or later, the toolchain Divine mobile builds with. CI runs Flutter 3.47.9.
-
-* The Dart, Kotlin and Swift sides now talk through a Pigeon-generated, typed API (`pigeons/c2pa_api.dart`) instead of a hand-written method channel. `MethodChannelC2pa` is replaced by `PigeonC2pa`; apps that call the public `C2pa` API are unaffected.
-* `CertificateConfig.email` now reaches the iOS certificate generator; the old channel sent it under a key iOS never read.
+* The Dart, Kotlin and Swift sides now talk through a Pigeon-generated, typed API (`pigeons/c2pa_api.dart`) instead of a hand-written method channel. `MethodChannelC2pa` is replaced by `PigeonC2pa`.
+* `C2paPlatform` changes affect only code that calls it directly or implements it:
+  * `readFileWithContext` is removed; use `readFileDetailed(path, detailed, contextHandle: ...)`.
+  * `createCSR` takes a `CertificateConfig`.
+  * `createSelfSignedCertificateChain` takes a `CertificateConfig` instead of a map.
+  * `enrollHardwareKey` returns a `HardwareKeyEnrollment`.
+  * `C2paHttpResolver.mode` is removed.
 
 ### Added
 
@@ -44,6 +48,7 @@ Moves to c2pa-swift 0.1.0 and c2pa-android 0.1.2 (c2pa-rs 0.92). Both SDKs now s
 * Supported MIME types now come from the native SDKs.
 * `IngredientInfo.activeManifest`, the label of the ingredient's own manifest.
 * Finalizers release builders, settings and contexts that are garbage collected without `dispose()`.
+* `RemoteSigner` has a `const` constructor, like the other signers.
 
 ### Fixed
 
@@ -60,6 +65,8 @@ Moves to c2pa-swift 0.1.0 and c2pa-android 0.1.2 (c2pa-rs 0.92). Both SDKs now s
 * iOS: keychain keys use the tag form c2pa-swift's keychain signer looks up.
 * iOS: `deleteKey` deletes keychain keys. It stopped at c2pa-swift's `deleteSecureEnclaveKey`, which reports success even when no Secure Enclave key matched.
 * `ManifestInfo.claimGenerator` reads `claim_generator_info` for v2 claims; it was null for every manifest c2pa-rs 0.92 writes.
+* `CertificateConfig.email` now reaches the iOS certificate generator; the old channel sent it under a key iOS never read.
+* Both platforms reject an HTTP resolver response whose status is out of range instead of wrapping it.
 
 ## 0.0.4
 

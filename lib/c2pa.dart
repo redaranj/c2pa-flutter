@@ -91,6 +91,9 @@ each license.
 /// - [KeystoreSigner] - Android Keystore / iOS Keychain
 /// - [HardwareSigner] - StrongBox (Android) / Secure Enclave (iOS)
 /// - [RemoteSigner] - Remote web service signing
+/// - [SettingsSigner] - A signer defined in C2PA settings
+/// - [CawgIdentitySigner] - A claim signer combined with a CAWG X.509
+///   identity signer
 ///
 /// ## Key Classes
 ///
@@ -114,6 +117,7 @@ import 'package:meta/meta.dart';
 
 import 'c2pa_platform_interface.dart';
 import 'src/context_types.dart';
+import 'src/exceptions.dart';
 import 'src/manifest_types.dart';
 import 'src/settings_definition.dart';
 
@@ -1801,7 +1805,7 @@ class C2pa {
   /// separately in [manifestData], for sidecar (`.c2pa`) or remote manifests.
   ///
   /// **Platform note.** c2pa-android has no context-aware form of this
-  /// reader, so [context] is ignored on Android.
+  /// reader, so [ReaderOptions.context] is ignored on Android.
   Future<ManifestStoreInfo> readFileWithManifest(
     String path,
     Uint8List manifestData, {

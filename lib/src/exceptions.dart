@@ -39,7 +39,7 @@ sealed class C2paException implements Exception {
   /// The error message from the plugin or the native SDK.
   final String message;
 
-  /// Maps a [PlatformException] from the method channel to the matching
+  /// Maps a [PlatformException] from the platform channel to the matching
   /// [C2paException].
   factory C2paException.fromPlatformException(PlatformException e) {
     final code = e.code;
@@ -86,7 +86,7 @@ final class C2paManifestNotFoundException extends C2paException {
     : super('C2PA_ERROR', message);
 }
 
-/// The operation was stopped by [C2paContext.cancel].
+/// The operation was stopped by `C2paContext.cancel`.
 final class C2paCancelledException extends C2paException {
   const C2paCancelledException(String message) : super('C2PA_ERROR', message);
 }
