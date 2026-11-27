@@ -104,7 +104,7 @@ final class KeyManagement {
             kSecClass as String: kSecClassKey,
             kSecAttrApplicationTag as String: Data(keyAlias.utf8),
         ]
-        SecItemDelete(deleteQuery as CFDictionary)
+        _ = SecItemDelete(deleteQuery as CFDictionary)
 
         let addQuery: [String: Any] = [
             kSecClass as String: kSecClassKey,
