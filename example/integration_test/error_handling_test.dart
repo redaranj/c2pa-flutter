@@ -50,7 +50,9 @@ void main() {
   );
 
   final manifest = jsonEncode({
-    'claim_generator': 'test/1.0',
+    'claim_generator_info': [
+          {'name': 'test', 'version': '1.0'},
+        ],
     'title': 'Test',
     'format': 'image/jpeg',
   });
@@ -271,12 +273,16 @@ void main() {
       );
     });
 
-    testWidgets('manifest with empty assertions', (tester) async {
+    testWidgets('a manifest without a created action is rejected', (
+      tester,
+    ) async {
       final byteData = await rootBundle.load('assets/test_images/test_unsigned.jpg');
       final imageBytes = byteData.buffer.asUint8List();
 
       final manifest = jsonEncode({
-        'claim_generator': 'test/1.0',
+        'claim_generator_info': [
+          {'name': 'test', 'version': '1.0'},
+        ],
         'title': 'Empty Assertions Test',
         'format': 'image/jpeg',
         'assertions': [],
@@ -288,15 +294,16 @@ void main() {
         privateKeyPem: testKey,
       );
 
-      // Should succeed with empty assertions
-      final result = await c2pa.signBytes(
-        sourceData: imageBytes,
-        mimeType: 'image/jpeg',
-        manifestJson: manifest,
-        signer: signer,
+      // c2pa-rs requires the first action to be c2pa.created or c2pa.opened.
+      await expectLater(
+        c2pa.signBytes(
+          sourceData: imageBytes,
+          mimeType: 'image/jpeg',
+          manifestJson: manifest,
+          signer: signer,
+        ),
+        throwsA(isA<C2paSdkException>()),
       );
-
-      expect(result.signedData.isNotEmpty, true);
     });
 
     testWidgets('manifest with special characters in title', (tester) async {
@@ -304,7 +311,9 @@ void main() {
       final imageBytes = byteData.buffer.asUint8List();
 
       final manifest = jsonEncode({
-        'claim_generator': 'test/1.0',
+        'claim_generator_info': [
+          {'name': 'test', 'version': '1.0'},
+        ],
         'title': 'Test with special chars: !@#\$%^&*()_+-=[]{}|;\':",.<>?/',
         'format': 'image/jpeg',
         'assertions': [
@@ -312,7 +321,10 @@ void main() {
             'label': 'c2pa.actions',
             'data': {
               'actions': [
-                {'action': 'c2pa.created'}
+                {
+                  'action': 'c2pa.created',
+                  'digitalSourceType': 'http://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture',
+                }
               ]
             }
           }
@@ -348,7 +360,9 @@ void main() {
       final imageBytes = byteData.buffer.asUint8List();
 
       final manifest = jsonEncode({
-        'claim_generator': 'test/1.0',
+        'claim_generator_info': [
+          {'name': 'test', 'version': '1.0'},
+        ],
         'title': 'Unicode test: caf\u00e9, \u0395\u03bb\u03bb\u03b7\u03bd\u03b9\u03ba\u03ac, \u65e5\u672c\u8a9e',
         'format': 'image/jpeg',
         'assertions': [
@@ -356,7 +370,10 @@ void main() {
             'label': 'c2pa.actions',
             'data': {
               'actions': [
-                {'action': 'c2pa.created'}
+                {
+                  'action': 'c2pa.created',
+                  'digitalSourceType': 'http://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture',
+                }
               ]
             }
           }

@@ -48,7 +48,9 @@ void main() {
     testWidgets('sign bytes then read manifest', (tester) async {
       // Create manifest with specific content
       final manifest = jsonEncode({
-        'claim_generator': 'c2pa_flutter_roundtrip_test/1.0',
+        'claim_generator_info': [
+          {'name': 'c2pa_flutter_roundtrip_test', 'version': '1.0'},
+        ],
         'title': 'Roundtrip Test Image',
         'format': 'image/jpeg',
         'assertions': [
@@ -58,6 +60,7 @@ void main() {
               'actions': [
                 {
                   'action': 'c2pa.created',
+                  'digitalSourceType': 'http://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture',
                   'softwareAgent': 'c2pa_flutter_roundtrip_test/1.0',
                 }
               ]
@@ -97,7 +100,9 @@ void main() {
       await sourceFile.writeAsBytes(testImageBytes);
 
       final manifest = jsonEncode({
-        'claim_generator': 'c2pa_flutter_file_test/1.0',
+        'claim_generator_info': [
+          {'name': 'c2pa_flutter_file_test', 'version': '1.0'},
+        ],
         'title': 'File Roundtrip Test',
         'format': 'image/jpeg',
         'assertions': [
@@ -105,7 +110,10 @@ void main() {
             'label': 'c2pa.actions',
             'data': {
               'actions': [
-                {'action': 'c2pa.created'}
+                {
+                  'action': 'c2pa.created',
+                  'digitalSourceType': 'http://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture',
+                }
               ]
             }
           }
@@ -142,7 +150,9 @@ void main() {
   group('Manifest Store Info Roundtrip', () {
     testWidgets('sign then read as ManifestStoreInfo', (tester) async {
       final manifest = jsonEncode({
-        'claim_generator': 'c2pa_flutter_store_test/1.0',
+        'claim_generator_info': [
+          {'name': 'c2pa_flutter_store_test', 'version': '1.0'},
+        ],
         'title': 'ManifestStoreInfo Test',
         'format': 'image/jpeg',
         'assertions': [
@@ -191,7 +201,9 @@ void main() {
 
     testWidgets('verify assertions are preserved', (tester) async {
       final manifest = jsonEncode({
-        'claim_generator': 'c2pa_flutter_assertions_test/1.0',
+        'claim_generator_info': [
+          {'name': 'c2pa_flutter_assertions_test', 'version': '1.0'},
+        ],
         'title': 'Assertions Test',
         'format': 'image/jpeg',
         'assertions': [
@@ -201,6 +213,7 @@ void main() {
               'actions': [
                 {
                   'action': 'c2pa.created',
+                  'digitalSourceType': 'http://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture',
                   'softwareAgent': 'test_agent/1.0',
                 }
               ]
@@ -258,7 +271,9 @@ void main() {
   group('Builder Roundtrip', () {
     testWidgets('builder sign then read manifest', (tester) async {
       final manifest = jsonEncode({
-        'claim_generator': 'c2pa_flutter_builder_test/1.0',
+        'claim_generator_info': [
+          {'name': 'c2pa_flutter_builder_test', 'version': '1.0'},
+        ],
         'title': 'Builder Roundtrip Test',
         'format': 'image/jpeg',
       });
@@ -297,7 +312,9 @@ void main() {
 
     testWidgets('builder archive roundtrip', (tester) async {
       final manifest = jsonEncode({
-        'claim_generator': 'c2pa_flutter_archive_test/1.0',
+        'claim_generator_info': [
+          {'name': 'c2pa_flutter_archive_test', 'version': '1.0'},
+        ],
         'title': 'Archive Test Image',
         'format': 'image/jpeg',
       });

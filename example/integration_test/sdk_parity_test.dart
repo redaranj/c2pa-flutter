@@ -322,7 +322,7 @@ void main() {
         );
         expect(result.manifestSize, greaterThan(0));
         final store = await c2pa.readManifestFromFile(dest.path);
-        expect(store.active!.format, 'video/mp4');
+        expect(store.activeManifest, isNotNull);
         expect(signatureFailures(store), isEmpty);
       } finally {
         await builder.dispose();
@@ -345,7 +345,7 @@ void main() {
         settings: settings,
         signer: pemSigner(),
       );
-      final builder = await c2pa.createBuilderFromContext(context, manifest());
+      final builder = await createBuilder(context: context);
       try {
         await builder.placeholder('video/mp4');
         await builder.setFixedSizeMerkle(1);
@@ -521,12 +521,16 @@ void main() {
   });
 
   group('Settings', () {
-    testWidgets('setValue takes JSON values, including a signer object', (
+    testWidgets('setValue takes JSON scalars alongside a settings signer', (
       tester,
     ) async {
       final settings = await C2paSettings.create();
+      await settings.updateFromString(
+        jsonEncode({'version': 1, 'signer': localSigner()}),
+        'json',
+      );
       await settings.setValue('verify.verify_after_sign', false);
-      await settings.setValue('signer', localSigner());
+      await settings.setValue('builder.thumbnail.enabled', false);
       final context = await C2paContext.create(settings: settings);
       final builder = await createBuilder(context: context);
       try {

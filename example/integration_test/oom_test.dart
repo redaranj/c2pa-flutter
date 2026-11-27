@@ -107,7 +107,9 @@ void main() {
     await createMp4(videoFile, 15 * 1024 * 1024);
 
     final manifest = jsonEncode({
-      'claim_generator': 'c2pa_flutter_oom_test/1.0',
+      'claim_generator_info': [
+          {'name': 'c2pa_flutter_oom_test', 'version': '1.0'},
+        ],
       'title': 'OOM Test',
       'format': 'video/mp4',
       'assertions': [
@@ -115,7 +117,10 @@ void main() {
           'label': 'c2pa.actions',
           'data': {
             'actions': [
-              {'action': 'c2pa.created'}
+              {
+                  'action': 'c2pa.created',
+                  'digitalSourceType': 'http://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture',
+                }
             ]
           }
         }

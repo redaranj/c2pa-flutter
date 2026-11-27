@@ -161,13 +161,7 @@ void main() {
             mimeType: 'image/jpeg',
             signer: SettingsSigner(settingsString: localSignerSettings()),
           ),
-          throwsA(
-            isA<PlatformException>().having(
-              (e) => e.code,
-              'code',
-              'INVALID_ARGUMENT',
-            ),
-          ),
+          throwsA(isA<C2paInvalidArgumentException>()),
         );
       } finally {
         await builder.dispose();
@@ -180,7 +174,7 @@ void main() {
       try {
         await expectLater(
           builder.sign(sourceData: jpeg, mimeType: 'image/jpeg'),
-          throwsA(isA<PlatformException>()),
+          throwsA(isA<C2paSdkException>()),
         );
       } finally {
         await builder.dispose();
@@ -545,7 +539,7 @@ void main() {
       try {
         await expectLater(
           builder.addIngredientFromFile(path: missing),
-          throwsA(isA<PlatformException>()),
+          throwsA(isA<C2paInvalidArgumentException>()),
         );
         expect(File(missing).existsSync(), isFalse);
       } finally {
