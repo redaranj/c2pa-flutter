@@ -82,7 +82,12 @@ class PigeonC2pa extends C2paPlatform implements C2paFlutterApi {
   }
 
   @override
-  void progress(int contextHandle, String phase, int step, int total) {
+  Future<void> progress(
+    int contextHandle,
+    String phase,
+    int step,
+    int total,
+  ) async {
     _contextCallbacks[contextHandle]?.onProgress?.call(
       C2paProgress(
         phase: C2paProgressPhase.fromName(phase),

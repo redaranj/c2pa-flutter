@@ -911,18 +911,15 @@ void main() {
       expect(mockPlatform.methodCalls.last.method, 'createContext');
     });
 
-    test(
-      'fromSettings() creates context from settings handle and records settingsHandle',
-      () async {
-        final settings = await C2paSettings.create();
-        final context = await C2paContext.fromSettings(settings);
+    test('fromSettings() creates context from settings handle and records settingsHandle', () async {
+      final settings = await C2paSettings.create();
+      final context = await C2paContext.fromSettings(settings);
 
-        expect(context.handle, greaterThan(0));
-        final call = mockPlatform.methodCalls.last;
-        expect(call.method, 'createContext');
-        expect(call.arguments!['settingsHandle'], settings.handle);
-      },
-    );
+      expect(context.handle, greaterThan(0));
+      final call = mockPlatform.methodCalls.last;
+      expect(call.method, 'createContext');
+      expect(call.arguments!['settingsHandle'], settings.handle);
+    });
 
     test('dispose() prevents further operations', () async {
       final context = await C2paContext.create();

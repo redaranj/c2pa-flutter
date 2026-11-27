@@ -21,7 +21,7 @@ Moves to c2pa-swift 0.1.0 and c2pa-android 0.1.2 (c2pa-rs 0.92). Both SDKs now s
 * `SignatureInfo.algorithm` is null for an algorithm the plugin does not know, instead of `es256`.
 * `createKey` honours `algorithm` (P-256, P-384 or P-521) and rejects anything else. Hardware keys require `es256`.
 * Removed `C2pa.readManifestFromFileWithContext`. Pass the context in `ReaderOptions`.
-* The package needs Flutter 3.38 or later, which ships the Dart 3.10 SDK it already required.
+* The package needs Dart 3.13 and Flutter 3.47 or later, the toolchain Divine mobile builds with. CI runs Flutter 3.47.9.
 
 * The Dart, Kotlin and Swift sides now talk through a Pigeon-generated, typed API (`pigeons/c2pa_api.dart`) instead of a hand-written method channel. `MethodChannelC2pa` is replaced by `PigeonC2pa`; apps that call the public `C2pa` API are unaffected.
 * `CertificateConfig.email` now reaches the iOS certificate generator; the old channel sent it under a key iOS never read.

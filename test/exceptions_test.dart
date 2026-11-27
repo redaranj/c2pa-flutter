@@ -103,9 +103,8 @@ void main() {
 
     test('falls back to validation_status without validation_state', () {
       expect(
-        ManifestStoreInfo.fromMap({
-          'validation_status': <Object>[],
-        }).validationStatus,
+        ManifestStoreInfo.fromMap({'validation_status': <Object>[]})
+            .validationStatus,
         ValidationStatus.valid,
       );
       expect(

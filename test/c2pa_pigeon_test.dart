@@ -335,7 +335,7 @@ void main() {
     test('progress reaches the context callback', () async {
       final updates = <C2paProgress>[];
       final handle = await platform.createContext(onProgress: updates.add);
-      platform.progress(handle, 'signing', 2, 4);
+      await platform.progress(handle, 'signing', 2, 4);
       expect(updates.single.phase, C2paProgressPhase.signing);
       expect(updates.single.fraction, 0.5);
     });
@@ -343,7 +343,7 @@ void main() {
     test('unknown progress phases map to unknown', () async {
       final updates = <C2paProgress>[];
       final handle = await platform.createContext(onProgress: updates.add);
-      platform.progress(handle, 'somethingNew', 1, 0);
+      await platform.progress(handle, 'somethingNew', 1, 0);
       expect(updates.single.phase, C2paProgressPhase.unknown);
       expect(updates.single.fraction, isNull);
     });

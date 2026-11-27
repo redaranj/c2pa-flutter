@@ -12,6 +12,10 @@ each license.
 
 // The interface between the Dart plugin and the native plugins. Generate the
 // Dart, Kotlin and Swift bindings with `make pigeon` after editing it.
+//
+// Methods use `@asyncCallback` rather than `@async`: the native plugins run
+// each call on their own serial worker and reply through a callback, so the
+// coroutine and async/await forms Pigeon generates for `@async` do not fit.
 
 import 'package:pigeon/pigeon.dart';
 
@@ -223,7 +227,7 @@ class HttpResponseMessage {
 // Dart to native
 // ---------------------------------------------------------------------------
 
-/// Calls into the native plugin. Methods marked `@async` run on the plugin's
+/// Calls into the native plugin. Methods marked `@asyncCallback` run on the plugin's
 /// serial worker (key management on a separate pool) and fail with a
 /// `PlatformException` whose code is `C2PA_ERROR`, `INVALID_ARGUMENT`,
 /// `INVALID_HANDLE`, `NOT_IMPLEMENTED_IOS`, `NOT_IMPLEMENTED_ANDROID`,
@@ -232,12 +236,12 @@ class HttpResponseMessage {
 abstract class C2paHostApi {
   String getPlatformVersion();
 
-  @async
+  @asyncCallback
   String getVersion();
 
   // Reading. A null mimeType for a path means "infer it from the extension".
 
-  @async
+  @asyncCallback
   String readFile(
     String path,
     String? mimeType,
@@ -245,7 +249,7 @@ abstract class C2paHostApi {
     int? contextHandle,
   );
 
-  @async
+  @asyncCallback
   String readBytes(
     Uint8List data,
     String mimeType,
@@ -255,7 +259,7 @@ abstract class C2paHostApi {
 
   /// Reads the asset at [path] or in [data] against a separately supplied
   /// manifest store.
-  @async
+  @asyncCallback
   String readWithManifest(
     String? path,
     Uint8List? data,
@@ -265,7 +269,7 @@ abstract class C2paHostApi {
     int? contextHandle,
   );
 
-  @async
+  @asyncCallback
   String readFragment(
     String initPath,
     String fragmentPath,
@@ -274,7 +278,7 @@ abstract class C2paHostApi {
     int? contextHandle,
   );
 
-  @async
+  @asyncCallback
   Uint8List extractResource(
     Uint8List data,
     String mimeType,
@@ -282,21 +286,21 @@ abstract class C2paHostApi {
     int? contextHandle,
   );
 
-  @async
+  @asyncCallback
   String? getRemoteUrl(String path, String? mimeType);
 
-  @async
+  @asyncCallback
   bool isManifestEmbedded(String path, String? mimeType);
 
-  @async
+  @asyncCallback
   List<String> getSupportedReadMimeTypes();
 
-  @async
+  @asyncCallback
   List<String> getSupportedSignMimeTypes();
 
   // One-shot signing.
 
-  @async
+  @asyncCallback
   SignResultMessage signBytes(
     Uint8List sourceData,
     String mimeType,
@@ -304,7 +308,7 @@ abstract class C2paHostApi {
     SignerMessage signer,
   );
 
-  @async
+  @asyncCallback
   void signFile(
     String sourcePath,
     String destPath,
@@ -312,46 +316,46 @@ abstract class C2paHostApi {
     SignerMessage signer,
   );
 
-  @async
+  @asyncCallback
   int getSignerReserveSize(SignerMessage signer);
 
-  @async
+  @asyncCallback
   Uint8List composeManifest(Uint8List manifestBytes, String mimeType);
 
   // Builders.
 
-  @async
+  @asyncCallback
   int createBuilder(String manifestJson, int? contextHandle);
 
-  @async
+  @asyncCallback
   int createBuilderWithSettings(String manifestJson, int settingsHandle);
 
-  @async
+  @asyncCallback
   int createBuilderFromArchive(Uint8List archiveData, int? contextHandle);
 
-  @async
+  @asyncCallback
   void builderDispose(int handle);
 
-  @async
+  @asyncCallback
   void builderSetIntent(
     int handle,
     ManifestIntentMessage intent,
     String? digitalSourceType,
   );
 
-  @async
+  @asyncCallback
   void builderSetNoEmbed(int handle);
 
-  @async
+  @asyncCallback
   void builderSetRemoteUrl(int handle, String url);
 
-  @async
+  @asyncCallback
   void builderSetBasePath(int handle, String path);
 
-  @async
+  @asyncCallback
   void builderAddResource(int handle, String uri, Uint8List data);
 
-  @async
+  @asyncCallback
   void builderAddIngredient(
     int handle,
     Uint8List data,
@@ -359,7 +363,7 @@ abstract class C2paHostApi {
     String? ingredientJson,
   );
 
-  @async
+  @asyncCallback
   void builderAddIngredientFromFile(
     int handle,
     String path,
@@ -367,20 +371,20 @@ abstract class C2paHostApi {
     String? ingredientJson,
   );
 
-  @async
+  @asyncCallback
   void builderAddIngredientFromArchive(int handle, Uint8List archiveData);
 
-  @async
+  @asyncCallback
   Uint8List builderWriteIngredientArchive(int handle, String ingredientId);
 
-  @async
+  @asyncCallback
   void builderAddAction(int handle, String actionJson);
 
-  @async
+  @asyncCallback
   Uint8List builderToArchive(int handle);
 
   /// Signs with [signer], or with the builder's context signer when null.
-  @async
+  @asyncCallback
   SignResultMessage builderSign(
     int handle,
     Uint8List sourceData,
@@ -388,7 +392,7 @@ abstract class C2paHostApi {
     SignerMessage? signer,
   );
 
-  @async
+  @asyncCallback
   SignResultMessage builderSignFile(
     int handle,
     String sourcePath,
@@ -397,34 +401,34 @@ abstract class C2paHostApi {
     SignerMessage? signer,
   );
 
-  @async
+  @asyncCallback
   bool builderNeedsPlaceholder(int handle, String mimeType);
 
-  @async
+  @asyncCallback
   Uint8List builderPlaceholder(int handle, String mimeType);
 
-  @async
+  @asyncCallback
   void builderSetDataHashExclusions(
     int handle,
     List<DataHashExclusionMessage> exclusions,
   );
 
-  @async
+  @asyncCallback
   void builderUpdateHashFromBytes(int handle, String mimeType, Uint8List data);
 
-  @async
+  @asyncCallback
   void builderUpdateHashFromFile(int handle, String path, String? mimeType);
 
-  @async
+  @asyncCallback
   Uint8List builderSignEmbeddable(int handle, String mimeType);
 
-  @async
+  @asyncCallback
   HashTypeMessage builderHashType(int handle, String mimeType);
 
-  @async
+  @asyncCallback
   void builderSetFixedSizeMerkle(int handle, int fixedSizeKb);
 
-  @async
+  @asyncCallback
   void builderHashMdatBytes(
     int handle,
     int mdatId,
@@ -434,36 +438,36 @@ abstract class C2paHostApi {
 
   // Key management.
 
-  @async
+  @asyncCallback
   bool isHardwareSigningAvailable();
 
-  @async
+  @asyncCallback
   void createKey(
     String keyAlias,
     SigningAlgorithmMessage algorithm,
     bool useHardware,
   );
 
-  @async
+  @asyncCallback
   bool deleteKey(String keyAlias);
 
-  @async
+  @asyncCallback
   bool keyExists(String keyAlias);
 
-  @async
+  @asyncCallback
   String exportPublicKey(String keyAlias);
 
-  @async
+  @asyncCallback
   void importKey(
     String keyAlias,
     String privateKeyPem,
     String certificateChainPem,
   );
 
-  @async
+  @asyncCallback
   String createCSR(String keyAlias, CertificateConfigMessage config);
 
-  @async
+  @asyncCallback
   HardwareKeyEnrollmentMessage enrollHardwareKey(
     String keyAlias,
     String signingServerUrl,
@@ -473,7 +477,7 @@ abstract class C2paHostApi {
     bool useStrongBox,
   );
 
-  @async
+  @asyncCallback
   String createSelfSignedCertificateChain(
     String keyAlias,
     CertificateConfigMessage? config,
@@ -481,25 +485,25 @@ abstract class C2paHostApi {
 
   // Settings.
 
-  @async
+  @asyncCallback
   void loadSettings(String settings, String format);
 
-  @async
+  @asyncCallback
   int createSettings();
 
-  @async
+  @asyncCallback
   void settingsUpdateFromString(int handle, String settings, String format);
 
   /// [jsonValue] is a JSON-encoded value.
-  @async
+  @asyncCallback
   void settingsSetValue(int handle, String path, String jsonValue);
 
-  @async
+  @asyncCallback
   void settingsDispose(int handle);
 
   // Contexts.
 
-  @async
+  @asyncCallback
   int createContext(
     int? settingsHandle,
     SignerMessage? signer,
@@ -511,7 +515,7 @@ abstract class C2paHostApi {
   /// that is occupying the worker.
   void contextCancel(int handle);
 
-  @async
+  @asyncCallback
   void contextDispose(int handle);
 }
 
@@ -524,14 +528,15 @@ abstract class C2paHostApi {
 @FlutterApi()
 abstract class C2paFlutterApi {
   /// Signs [data] with the Dart callback registered as [callbackId].
-  @async
+  @asyncCallback
   Uint8List sign(String callbackId, Uint8List data);
 
   /// Reports progress of an operation on the context [contextHandle].
   /// [phase] is the SDK phase name, for example `signing`.
+  @asyncCallback
   void progress(int contextHandle, String phase, int step, int total);
 
   /// Answers an HTTP request for the context [contextHandle].
-  @async
+  @asyncCallback
   HttpResponseMessage resolveHttp(int contextHandle, HttpRequestMessage request);
 }
